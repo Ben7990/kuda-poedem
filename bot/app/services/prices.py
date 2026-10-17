@@ -198,6 +198,173 @@ ALIASES = {
 }
 
 
+# Правильное написание курортов (в ALIASES ключи — в нижнем регистре).
+# "алания" исправляем на корректное "Аланья" (Alanya).
+_RESORT_DISPLAY = {k: ("Аланья" if k == "алания" else k.capitalize()) for k in ALIASES}
+
+_VOWELS = "аеёиоуыэюя"
+_CONSONANTS = "бвгджзйклмнпрстфхцчшщ"
+
+
+def _declension_keys(name: str) -> list[str]:
+    """Частые падежные формы названия (normalized) для индекса автокоррекции.
+
+    Позволяет понять "стамбуле"/"москву"/"дubaи" как "Стамбул"/"Москва"/"Дubaай".
+    """
+    out: list[str] = []
+    low = name.lower()
+    if low.endswith("ай"):
+        out.append(_norm(name[:-2] + "и"))  # Дubaай -> Дubaи
+    if low.endswith("й"):
+        stem = name[:-1]
+        for suf in ("и", "ю", "е", "ем"):
+            out.append(_norm(stem + suf))
+    elif low.endswith("а"):
+        stem = name[:-1]
+        for suf in ("ы", "е", "у", "ой", "ей", "ам", "ах"):
+            out.append(_norm(stem + suf))
+    elif low.endswith("я"):
+        stem = name[:-1]
+        for suf in ("и", "ю", "е", "ей"):
+            out.append(_norm(stem + suf))
+    elif low.endswith("ь"):
+        stem = name[:-1]
+        for suf in ("и", "ю", "ем"):
+            out.append(_norm(stem + suf))
+    elif low and low[-1] in _CONSONANTS:
+        for suf in ("а", "у", "е", "ом", "ы", "и"):
+            out.append(_norm(name + suf))
+    return [k for k in out if k and k != _norm(name)]
+
+_PLACE_RU_CACHE: dict[str, str] | None = None
+_PLACE_EN_CACHE: dict[str, str] | None = None
+
+
+async def _place_lookup() -> tuple[dict[str, str], dict[str, str]]:
+    """Индексы для автокоррекции: normalized -> каноничное написание.
+
+    Русский индекс строится из городов, аэропортов, стран и курортов;
+    английский — из name_translations.en (маппится на русское название).
+    """
+    global _PLACE_RU_CACHE, _PLACE_EN_CACHE
+    if _PLACE_RU_CACHE is not None and _PLACE_EN_CACHE is not None:
+        return _PLACE_RU_CACHE, _PLACE_EN_CACHE
+    await _load_indexes()
+    await _load_countries()
+    ru: dict[str, str] = {}
+    en: dict[str, str] = {}
+    # Проход 1: точные канонические названия.
+    for rec in _cities_by_code.values():
+        name = (rec.get("name") or "").strip()
+        if not name:
+            continue
+        ru.setdefault(_norm(name), name)
+        eng = ((rec.get("name_translations") or {}).get("en") or "").strip()
+        if eng:
+            en.setdefault(_norm(eng), name)
+    for rec in _airports_by_code.values():
+        name = (rec.get("name") or "").strip()
+        if not name:
+            continue
+        ru.setdefault(_norm(name), name)
+        eng = ((rec.get("name_translations") or {}).get("en") or "").strip()
+        if eng:
+            en.setdefault(_norm(eng), name)
+    for name in (_country_name_by_iso or {}).values():
+        if name:
+            ru.setdefault(_norm(name), name)
+    # Популярные сокращённые формы стран/городов.
+    for k, v in [
+        ("ОАЭ", "ОАЭ"),
+        ("США", "США"),
+        ("оаэ", "ОАЭ"),
+        ("сша", "США"),
+        ("usa", "США"),
+        ("us", "США"),
+        ("ростов", "Ростов-на-Дону"),
+        ("спб", "Санкт-Петербург"),
+        ("питер", "Санкт-Петербург"),
+        ("петербург", "Санкт-Петербург"),
+        ("мск", "Москва"),
+    ]:
+        ru.setdefault(_norm(k), v)
+    for key, disp in _RESORT_DISPLAY.items():
+        ru.setdefault(_norm(key), disp)
+    # Популярные английские названия для корректного автодополнения.
+    _EN_OVERRIDES = {
+        "paris": "Париж",
+        "london": "Лондон",
+        "newyork": "Нью-Йорк",
+        "ny": "Нью-Йорк",
+        "losangeles": "Лос-Анджелес",
+        "milan": "Милан",
+        "rome": "Рим",
+        "barcelona": "Барселона",
+        "madrid": "Мадрид",
+        "amsterdam": "Амстердам",
+        "berlin": "Берлин",
+        "prague": "Прага",
+        "vienna": "Вена",
+        "istanbul": "Стамбул",
+        "dubai": "Дубай",
+        "bangkok": "Бангкок",
+        "singapore": "Сингапур",
+        "tokyo": "Токио",
+        "seoul": "Сеул",
+        "beijing": "Пекин",
+        "shanghai": "Шанхай",
+        "moscow": "Москва",
+        "stpetersburg": "Санкт-Петербург",
+        "saintpetersburg": "Санкт-Петербург",
+        "addisababa": "Аддис-Абеба",
+    }
+    for k, v in _EN_OVERRIDES.items():
+        en[_norm(k)] = v
+    # Англоязычные сокращения стран
+    en[_norm("oae")] = "ОАЭ"
+    en[_norm("usa")] = "США"
+    en[_norm("uae")] = "ОАЭ"
+    # Проход 2: падежные формы (уступают точным названиям из-за setdefault).
+    for rec in _cities_by_code.values():
+        name = (rec.get("name") or "").strip()
+        for key in _declension_keys(name):
+            ru.setdefault(key, name)
+    for name in (_country_name_by_iso or {}).values():
+        if name:
+            for key in _declension_keys(name):
+                ru.setdefault(key, name)
+    _PLACE_RU_CACHE, _PLACE_EN_CACHE = ru, en
+    return ru, en
+
+
+
+async def canonicalize_place(query: str) -> str:
+    """Исправляет регистр и опечатки в названии города/страны/курорта.
+
+    Работает с русским и английским написанием, а также с формой без
+    дефисов/пробелов. Нераспознанные места возвращаются как есть.
+    """
+    text = (query or "").strip()
+    if not text:
+        return text
+    ru, en = await _place_lookup()
+    parts = [p.strip() for p in re.split(r"[,;]", text) if p.strip()]
+    if not parts:
+        return text
+    fixed: list[str] = []
+    for part in parts:
+        key = _norm(part)
+        proper = ru.get(key) or en.get(key)
+        if proper is None and len(key) >= 4:
+            import difflib
+
+            cand = difflib.get_close_matches(key, list(ru), n=1, cutoff=0.85)
+            if cand:
+                proper = ru[cand[0]]
+        fixed.append(proper if proper else part)
+    return ", ".join(fixed)
+
+
 async def _load_dataset(url: str, fname: str) -> list:
     path = _cache_path(fname)
     if path.exists():
