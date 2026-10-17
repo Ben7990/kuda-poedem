@@ -76,6 +76,16 @@ async def test_affiliate() -> None:
           bool(links["trains"]) and "rasp.yandex.ru" in links["trains"])
     far = await affiliate.all_links("Ростов-на-Дону", "Бангладеш", "2026-11-10", "2026-11-20")
     check("ЖД для Бангладеш — нет (только авиа)", far["trains"] is None)
+    # Ссылки на переезды (legs)
+    train_leg = {"mode": "train", "from": "Ростов-на-Дону", "to": "Краснодар", "date": "2026-11-10"}
+    check("leg train -> Яндекс.Расписания", "rasp.yandex.ru/search/train" in affiliate.leg_link(train_leg))
+    bus_leg = {"mode": "bus", "from": "Ростов-на-Дону", "to": "Краснодар", "date": "2026-11-10"}
+    check("leg bus -> Яндекс.Расписания", "rasp.yandex.ru/search/bus" in affiliate.leg_link(bus_leg))
+    fl_leg = {"mode": "flight", "from": "Краснодар", "to": "Стамбул", "date": "2026-11-10", "from_iata": "KRR", "to_iata": "IST"}
+    check("leg flight -> aviasales one-way", "aviasales.ru/search/KRR1011IST2" in affiliate.leg_link(fl_leg))
+    check("leg flight без IATA -> общий поиск", "aviasales.ru" in affiliate.leg_link({**fl_leg, "from_iata": "", "to_iata": ""}))
+    with_links = affiliate.legs_with_links({"legs": [train_leg, fl_leg]})
+    check("legs_with_links: 2 переезда", len(with_links) == 2 and with_links[0]["icon"] == "🚆")
 
 
 async def test_airport_context() -> None:
@@ -126,6 +136,7 @@ def test_validation() -> None:
         "routing": {"hubs": ["IST"]},
         "visa": "безвиз",
         "practical": ["валюта"],
+        "legs": [{"mode": "flight", "from": "Краснодар", "to": "Стамбул", "date": "2026-11-10", "from_iata": "KRR", "to_iata": "IST"}],
         "days": [{"date": "2026-11-10", "title": "T", "items": []},
                  {"date": "2026-11-11", "title": "T", "items": []}],
         "checklist": ["a", "b", "c"],
@@ -138,6 +149,9 @@ def test_validation() -> None:
     check("нет departure — ошибка", "departure" in (llm._validate_itinerary(bad, params) or ""))
     empty_dep = {**good, "departure": {"status_note": "n", "options": []}}
     check("пустой options — ошибка", "options" in (llm._validate_itinerary(empty_dep, params) or ""))
+    no_legs = {**good}
+    del no_legs["legs"]
+    check("нет legs — ошибка", "legs" in (llm._validate_itinerary(no_legs, params) or ""))
     short = {**good, "days": good["days"][:1]}
     check("меньше дней — ошибка", "должно быть" in (llm._validate_itinerary(short, params) or ""))
 
@@ -162,6 +176,7 @@ async def test_plan() -> None:
     check("demo: есть практика", len(plan["itinerary"]["practical"]) >= 1)
     check("demo: ссылка на авиа не из закрытого ROV", "ROV" not in plan["links"]["flights"])
     check("demo: отели — список сервисов", isinstance(plan["links"]["hotels"], list) and len(plan["links"]["hotels"]) >= 1)
+    check("demo: есть переезды с ссылками", len(plan["legs"]) >= 1 and all(l.get("url") for l in plan["legs"]))
 
     plan["real_prices"] = [{"price": 14500, "airline": "S7", "depart_date": "2026-11-10"}]
     chunks = render_plan(plan)
@@ -169,6 +184,7 @@ async def test_plan() -> None:
     check("рендер: блок цен", "Реальные цены" in text)
     check("рендер: блок вылета", "Вылет" in text)
     check("рендер: блок маршрута", "Как долететь" in text)
+    check("рендер: блок транспорта по маршруту", "Полный маршрут" in text and "выбрать рейс и места" in text)
     check("рендер: практика", "На месте" in text)
     check("рендер: чек-лист", "Чек-лист" in text)
     check("рендер: ссылки", "Авиабилеты" in text)

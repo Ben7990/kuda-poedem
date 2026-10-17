@@ -54,6 +54,13 @@ SYSTEM_PROMPT = (
     "  },\n"
     '  "visa": "режим въезда для граждан РФ на даты поездки",\n'
     '  "practical": ["валюта и обмен", "страховка", "связь/SIM", "безопасность"],\n'
+    '  "legs": [\n'
+    '    {"mode": "train", "from": "Ростов-на-Дону", "to": "Краснодар", "date": "2026-11-10", '
+    '"from_iata": "", "to_iata": "KRR", "note": "Ростов-Главный → Пашковская, ~3 ч, удобнее '
+    'дневной экспресс"},\n'
+    '    {"mode": "flight", "from": "Краснодар", "to": "Стамбул", "date": "2026-11-10", '
+    '"from_iata": "KRR", "to_iata": "IST", "note": "прямой, вылет вечером"}\n'
+    "  ],\n"
     '  "days": [\n'
     "    {\n"
     '      "date": "2026-11-10",\n'
@@ -103,8 +110,15 @@ SYSTEM_PROMPT = (
     "8. cost_rub — реалистичные цены в рублях. Учитывай формат поездки, бюджет на "
     "человека и сезон.\n"
     "9. Все обязательные поля схемы (route, summary, departure, routing, visa, practical, "
-    "days, checklist, budget_note, advice) должны присутствовать. checklist — минимум 3 "
+    "legs, days, checklist, budget_note, advice) должны присутствовать. checklist — минимум 3 "
     "пункта.\n"
+    "10. legs — это ПОЛНЫЙ список всех переездов между городами (включая наземный трансфер "
+    "до аэропорта/вокзала, поезда, автобусы, перелёты, паромы), в хронологическом порядке, "
+    "включая обратную дорогу домой. Для КАЖДОГО переезда: mode (train/flight/bus/car/ferry), "
+    "from, to, date, note (что конкретно удобнее: вокзал/аэропорт, ориентировочное время, "
+    "день/вечер, прямой/с пересадкой) и, для перелётов, from_iata/to_iata строго из блока "
+    "аэропортов. Дай 1-2 реальных варианта в note (например, «Ласточка днём или ночной "
+    "поезд»). Туда-обратно — отдельные legs.\n"
 )
 
 
@@ -301,6 +315,7 @@ def _validate_itinerary(it: dict, params: dict) -> str | None:
         "routing",
         "visa",
         "practical",
+        "legs",
         "days",
         "checklist",
         "budget_note",
@@ -314,6 +329,17 @@ def _validate_itinerary(it: dict, params: dict) -> str | None:
         options = departure.get("options")
         if not isinstance(options, list) or not options:
             errors.append("в departure пуст options — перечисли 2-3 альтернативы вылета")
+    legs = it.get("legs")
+    if not isinstance(legs, list) or not legs:
+        errors.append("массив legs пуст — перечисли все переезды маршрута")
+    else:
+        for i, leg in enumerate(legs):
+            if not isinstance(leg, dict):
+                errors.append(f"legs[{i}] не объект")
+                continue
+            for key in ("mode", "from", "to", "date"):
+                if not leg.get(key):
+                    errors.append(f"в legs[{i}] отсутствует '{key}'")
     days = it.get("days")
     if not isinstance(days, list) or not days:
         errors.append("массив days пуст")
@@ -473,6 +499,46 @@ def demo_itinerary(params: dict, ctx: dict | None = None) -> dict:
             }
         )
 
+    dest_airports = list((ctx or {}).get("dest_airports") or [])
+    dest_iata = next((d.get("code") for d in dest_airports if d.get("code")), "")
+    chosen_iata = departure["chosen"]["iata"]
+    chosen_city = departure["chosen"]["city"] or ""
+    legs = []
+    if chosen_iata:
+        legs.append(
+            {
+                "mode": "train",
+                "from": origin,
+                "to": chosen_city or origin,
+                "date": params["date_start"],
+                "from_iata": "",
+                "to_iata": chosen_iata,
+                "note": "наземная доставка до аэропорта вылета; расписание и места — по ссылке",
+            }
+        )
+    legs.append(
+        {
+            "mode": "flight",
+            "from": chosen_city or origin,
+            "to": destination,
+            "date": params["date_start"],
+            "from_iata": chosen_iata,
+            "to_iata": dest_iata,
+            "note": "перелёт к месту; варианты, время и места — по ссылке",
+        }
+    )
+    legs.append(
+        {
+            "mode": "flight",
+            "from": destination,
+            "to": chosen_city or origin,
+            "date": params["date_end"],
+            "from_iata": dest_iata,
+            "to_iata": chosen_iata,
+            "note": "обратный перелёт домой",
+        }
+    )
+
     return {
         "route": (
             f"{origin} → "
@@ -501,6 +567,7 @@ def demo_itinerary(params: dict, ctx: dict | None = None) -> dict:
             "Оформите медицинскую страховку — для многих стран она обязательна.",
             "Проверьте актуальные ограничения на вылет из своего аэропорта.",
         ],
+        "legs": legs,
         "days": days,
         "checklist": [
             "Загранпаспорт и виза (если нужна)",

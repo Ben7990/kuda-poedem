@@ -103,5 +103,6 @@ async def build_plan(state_data: dict, demo: bool = False) -> dict:
         "params": params,
         "itinerary": itinerary,
         "links": links,
+        "legs": affiliate.legs_with_links(itinerary, params["travelers"]),
         "real_prices": real_prices,
     }

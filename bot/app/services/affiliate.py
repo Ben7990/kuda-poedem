@@ -11,7 +11,7 @@
 """
 
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import asyncio
 
@@ -130,6 +130,93 @@ def trains_link(
     if when:
         params["when"] = when
     return "https://rasp.yandex.ru/search/train/?" + urlencode(params)
+
+
+def _rasp_link(kind: str, origin: str, destination: str, date: str) -> str:
+    params = {"fromName": _city_name(origin), "toName": _city_name(destination)}
+    try:
+        params["when"] = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+    except (TypeError, ValueError):
+        pass
+    return f"https://rasp.yandex.ru/search/{kind}/?" + urlencode(params)
+
+
+def flight_oneway_link(from_iata: str, to_iata: str, date: str, travelers: int = 2) -> str | None:
+    if not from_iata or not to_iata:
+        return None
+    try:
+        path = f"{from_iata}{_ddmm(date)}{to_iata}{travelers}"
+    except (TypeError, ValueError):
+        return None
+    base = f"https://www.aviasales.ru/search/{path}"
+    return base + ("?" + urlencode({"marker": settings.aviasales_marker}) if settings.aviasales_marker else "")
+
+
+def _looks_like_iata(code: str | None) -> bool:
+    return bool(code) and len(code) == 3 and code.isalpha() and code.isupper()
+
+
+def leg_link(leg: dict, travelers: int = 2) -> str | None:
+    """Ссылка «выбрать рейс» для одного переезда маршрута."""
+    mode = str(leg.get("mode", "flight")).lower()
+    origin = leg.get("from", "")
+    destination = leg.get("to", "")
+    date = leg.get("date", "")
+    if mode == "flight":
+        from_iata = (leg.get("from_iata") or "").strip().upper()
+        to_iata = (leg.get("to_iata") or "").strip().upper()
+        if _looks_like_iata(from_iata) and _looks_like_iata(to_iata):
+            return flight_oneway_link(from_iata, to_iata, date, travelers)
+        # без кодов — общий поиск по городам
+        return "https://www.aviasales.ru/?" + urlencode({"origin_name": origin, "destination_name": destination})
+    if mode in ("train", "rail", "поезд"):
+        return _rasp_link("train", origin, destination, date)
+    if mode in ("bus", "автобус"):
+        return _rasp_link("bus", origin, destination, date)
+    if mode in ("ferry", "паром"):
+        return _rasp_link("train", origin, destination, date)
+    if mode in ("car", "авто"):
+        return (
+            "https://yandex.ru/maps/?rtext="
+            + quote(f"{origin}~{destination}")
+            + "&rtt=auto"
+        )
+    return _rasp_link("train", origin, destination, date)
+
+
+MODE_ICONS = {
+    "flight": "✈️",
+    "train": "🚆",
+    "rail": "🚆",
+    "поезд": "🚆",
+    "bus": "🚌",
+    "автобус": "🚌",
+    "ferry": "⛴",
+    "паром": "⛴",
+    "car": "🚗",
+    "авто": "🚗",
+}
+
+
+def legs_with_links(itinerary: dict, travelers: int = 2) -> list[dict]:
+    """Список переездов с ссылкой на выбор рейса/расписание и места."""
+    out: list[dict] = []
+    for leg in itinerary.get("legs") or []:
+        if not isinstance(leg, dict):
+            continue
+        url = leg_link(leg, travelers)
+        out.append(
+            {
+                "mode": str(leg.get("mode", "")).lower(),
+                "icon": MODE_ICONS.get(str(leg.get("mode", "")).lower(), "🚏"),
+                "from": leg.get("from", ""),
+                "to": leg.get("to", ""),
+                "date": leg.get("date", ""),
+                "note": leg.get("note", ""),
+                "url": url,
+            }
+        )
+    return out
 
 
 async def all_links(

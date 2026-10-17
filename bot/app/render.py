@@ -71,6 +71,20 @@ def render_plan(plan: dict) -> list[str]:
             except (TypeError, ValueError):
                 parts.append(f"  Билеты: {escape(str(routing['approx_price_rub']))}")
 
+    legs = plan.get("legs") or []
+    if legs:
+        parts.append("")
+        parts.append("<b>🚏 Полный маршрут — транспорт (рейсы, время, места)</b>")
+        for i, leg in enumerate(legs, start=1):
+            head = f"  {i}. {leg.get('icon', '🚏')} {escape(str(leg.get('from', '')))} → {escape(str(leg.get('to', '')))}"
+            if leg.get("date"):
+                head += f" · {escape(str(leg['date']))}"
+            if leg.get("url"):
+                head += f' — <a href="{escape(str(leg["url"]), quote=True)}">выбрать рейс и места</a>'
+            parts.append(head)
+            if leg.get("note"):
+                parts.append(f"     💡 {escape(str(leg['note']))}")
+
     if it.get("visa"):
         parts.append("")
         parts.append(f"🛂 {escape(str(it['visa']))}")
