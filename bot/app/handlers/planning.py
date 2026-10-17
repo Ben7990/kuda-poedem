@@ -109,9 +109,11 @@ async def ask_offer(message: Message, state: FSMContext) -> None:
     await state.set_state(TripForm.offer)
     await message.answer(
         f"🎯 <b>Всё, что нужно, собрано!</b>\n\n"
-        f"Полный маршрут по дням — <b>{settings.price_per_trip_rub} ₽</b>\n"
-        f"💡 В демо-плане покажу только пример. В полном — реальный план "
-        f"под вас: логистика, экскурсии, чек-лист и ссылки.",
+        f"Полный персональный маршрут по дням — <b>{settings.price_per_trip_rub} ₽</b>\n\n"
+        f"В полном плане: логистика с пересадками, реальные рейсы и поезда с временем, "
+        f"отели, экскурсии, бюджет по дням, чек-лист и все ссылки.\n\n"
+        f"💡 В демо покажу такой же полный маршрут, но <b>другого направления</b> — "
+        f"как образец.",
         reply_markup=offer_menu(settings.price_per_trip_rub),
     )
 

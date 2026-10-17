@@ -3,12 +3,30 @@
 import asyncio
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.services import affiliate, schedule
 from app.services.llm import demo_itinerary, generate_itinerary
 
 logger = logging.getLogger(__name__)
+
+# Готовые примеры для демо-плана: показываем полный маршрут ДРУГОГО направления,
+# чтобы продемонстрировать формат, но не отдавать персональный план бесплатно.
+DEMO_SAMPLES = [
+    {"destination": "Стамбул, Турция", "origin": "Москва", "format": "culture", "days": 5, "budget_rub": 180000},
+    {"destination": "Дубай, ОАЭ", "origin": "Москва", "format": "beach", "days": 5, "budget_rub": 250000},
+    {"destination": "Рим, Италия", "origin": "Москва", "format": "culture", "days": 5, "budget_rub": 220000},
+]
+
+
+def _pick_demo_sample(user_destination: str | None) -> dict:
+    """Выбирает пример, направление которого не совпадает с запросом пользователя."""
+    wanted = affiliate._city_name(user_destination or "").lower()
+    for sample in DEMO_SAMPLES:
+        if wanted and wanted in affiliate._city_name(sample["destination"]).lower():
+            continue
+        return sample
+    return DEMO_SAMPLES[0]
 
 # Сопоставление режима переезда с типом поиска в Яндекс.Расписаниях.
 _SCHEDULE_KIND = {
@@ -97,6 +115,22 @@ def build_params(state_data: dict) -> dict:
 async def build_plan(state_data: dict, demo: bool = False) -> dict:
     from app.services import prices
 
+    user_destination = state_data.get("destination")
+    if demo:
+        # Демо показывает полный маршрут ДРУГОГО направления.
+        sample = _pick_demo_sample(user_destination)
+        start = (datetime.now().date() + timedelta(days=30))
+        end = start + timedelta(days=sample["days"] - 1)
+        state_data = {
+            **state_data,
+            "destination": sample["destination"],
+            "origin": sample["origin"],
+            "date_start": start.isoformat(),
+            "date_end": end.isoformat(),
+            "format": sample["format"],
+            "budget_rub": sample["budget_rub"],
+        }
+
     params = build_params(state_data)
     ctx = await prices.travel_context(params)
     itinerary = demo_itinerary(params, ctx) if demo else await generate_itinerary(params, ctx)
@@ -141,4 +175,6 @@ async def build_plan(state_data: dict, demo: bool = False) -> dict:
         "links": links,
         "legs": legs,
         "real_prices": real_prices,
+        "is_demo": demo,
+        "demo_destination": user_destination if demo else None,
     }

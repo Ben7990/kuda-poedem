@@ -38,6 +38,6 @@ def offer_menu(price: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=f"💳 Оплатить {price} ₽ и получить полный маршрут", callback_data="offer:pay")],
-            [InlineKeyboardButton(text="🆓 Бесплатный демо-план", callback_data="offer:preview")],
+            [InlineKeyboardButton(text="🆓 Пример плана (другое направление)", callback_data="offer:preview")],
         ]
     )

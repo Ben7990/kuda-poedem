@@ -126,6 +126,16 @@ async def test_airport_context() -> None:
     check("ctx: альтернативы заполнены", len(ctx["alternatives"]) >= 2)
     check("ctx: назначение DAC (среди прочих)", any(d["code"] == "DAC" for d in ctx["dest_airports"]))
     check("ctx: есть ключ attractions", "attractions" in ctx)
+    moscow = await prices.destination_airports("Москва")
+    moscow_codes = [a["code"] for a in moscow]
+    check("Москва: только аэропорты (нет ж/д станций)", all(
+        prices._airports_by_code.get(c, {}).get("iata_type", "airport").lower() == "airport"
+        for c in moscow_codes
+    ))
+    check("Москва: среди первых есть SVO/DME/VKO", any(c in moscow_codes[:4] for c in ("SVO", "DME", "VKO")))
+    ctx_open = await prices.travel_context({"origin": "Москва", "destination": "Стамбул, Турция"})
+    check("ctx открытого вылета: alternatives пуст", ctx_open["alternatives"] == [])
+    check("ctx открытого вылета: есть origin_airports", len(ctx_open["origin_airports"]) >= 1)
 
 
 def test_validation() -> None:
@@ -190,6 +200,9 @@ async def test_plan() -> None:
         "travelers": 2,
     }
     plan = await planner.build_plan(data, demo=True)
+    check("demo: флаг демо", plan.get("is_demo") is True)
+    check("demo: сохранено направление пользователя", plan.get("demo_destination") == "Кемер, Турция")
+    check("demo: показываем ДРУГОЕ направление", plan["params"]["destination"] != "Кемер, Турция")
     check("demo: нет цен без токена", plan["real_prices"] == [],)
     check("demo: есть summary", bool(plan["itinerary"]["summary"]))
     check("demo: есть дни", len(plan["itinerary"]["days"]) >= 1)
@@ -207,6 +220,7 @@ async def test_plan() -> None:
         ]
     chunks = render_plan(plan)
     text = "\n".join(chunks)
+    check("рендер: баннер демо", "ДЕМО-ПРИМЕР" in text and "Кемер, Турция" in text)
     check("рендер: блок цен", "Реальные цены" in text)
     check("рендер: блок вылета", "Вылет" in text)
     check("рендер: блок маршрута", "Как долететь" in text)

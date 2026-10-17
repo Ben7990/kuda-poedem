@@ -350,6 +350,8 @@ async def country_airports(query: str, limit: int = 20) -> list[dict]:
             continue
         if ap.get("flightable") is False:
             continue
+        if not _is_airport(ap):
+            continue
         code = ap.get("code", "")
         if not code or is_closed(code):
             continue
@@ -372,6 +374,12 @@ async def country_airports(query: str, limit: int = 20) -> list[dict]:
             }
         )
     return out
+
+
+def _is_airport(ap: dict) -> bool:
+    """Отсеивает ж/д станции и автовокзалы (iata_type: railway/bus и т.п.)."""
+    kind = str(ap.get("iata_type") or "airport").lower()
+    return kind in ("", "airport")
 
 
 def _coords(item: dict | None) -> tuple[float, float] | None:
@@ -428,6 +436,8 @@ async def departure_alternatives(origin: str, limit: int = 4) -> list[dict]:
             continue
         if ap.get("flightable") is False:
             continue
+        if not _is_airport(ap):
+            continue
         if is_closed(code):
             continue
         coords = _coords(ap)
@@ -477,19 +487,27 @@ async def destination_airports(destination: str) -> list[dict]:
                     "lon": coords[1] if coords else None,
                 }
             )
-        for ap in _airports_list:
-            if ap.get("city_code") == code and ap.get("code") != code:
-                city = (_cities_by_code.get(code) or {}).get("name", "")
-                coords = _coords(ap) or _coords(_cities_by_code.get(code))
-                out.append(
-                    {
-                        "code": ap["code"],
-                        "name": ap.get("name", ""),
-                        "city": city,
-                        "lat": coords[0] if coords else None,
-                        "lon": coords[1] if coords else None,
-                    }
-                )
+        siblings = [
+            ap
+            for ap in _airports_list
+            if ap.get("city_code") == code
+            and ap.get("code") != code
+            and ap.get("flightable") is not False
+            and _is_airport(ap)
+        ]
+        siblings.sort(key=lambda ap: (0 if ap.get("main_airport") else 1, ap.get("code", "")))
+        for ap in siblings:
+            city = (_cities_by_code.get(code) or {}).get("name", "")
+            coords = _coords(ap) or _coords(_cities_by_code.get(code))
+            out.append(
+                {
+                    "code": ap["code"],
+                    "name": ap.get("name", ""),
+                    "city": city,
+                    "lat": coords[0] if coords else None,
+                    "lon": coords[1] if coords else None,
+                }
+            )
         if out:
             return out
     # Страна (все работающие аэропорты через Wikidata ISO2).
@@ -529,7 +547,8 @@ async def travel_context(params: dict) -> dict:
             "closed": is_closed(origin_code),
             "reason": CLOSED_AIRPORTS.get((origin_code or "").upper(), ""),
         }
-    alternatives = await departure_alternatives(params["origin"])
+    alternatives = await departure_alternatives(params["origin"]) if (origin_airport or {}).get("closed") else []
+    origin_airports = await destination_airports(params["origin"])
     dest_airports = await destination_airports(params["destination"])
 
     attractions: list[str] = []
@@ -553,6 +572,7 @@ async def travel_context(params: dict) -> dict:
         "origin_label": params["origin"],
         "dest_label": params["destination"],
         "origin_airport": origin_airport,
+        "origin_airports": origin_airports,
         "alternatives": alternatives,
         "dest_airports": dest_airports,
         "attractions": attractions,

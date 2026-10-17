@@ -61,7 +61,21 @@ def render_plan(plan: dict) -> list[str]:
         f"{escape(params['format'])} · {params['budget_rub']} ₽"
     )
 
-    parts = [header, "", escape(str(it.get("summary", "")))]
+    parts = [header]
+    if plan.get("is_demo"):
+        demo_dest = plan.get("demo_destination") or "ваше направление"
+        parts.append("")
+        parts.append("🆓 <b>ДЕМО-ПРИМЕР (другое направление)</b>")
+        parts.append(
+            f"Это образец ПОЛНОГО маршрута для «{escape(str(params['destination']))}», "
+            f"чтобы вы увидели формат. Под <b>{escape(str(demo_dest))}</b> вы получите точно "
+            "такой же по структуре план: логистика с пересадками, реальные рейсы и поезда с "
+            "временем, отели и экскурсии, бюджет по дням, чек-лист и все ссылки."
+        )
+        parts.append("")
+        parts.append("─" * 12)
+        parts.append("")
+    parts.append(escape(str(it.get("summary", ""))))
 
     departure = it.get("departure") or {}
     if departure.get("status_note"):

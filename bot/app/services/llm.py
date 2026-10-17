@@ -156,6 +156,16 @@ def _ctx_block(ctx: dict | None) -> str:
             )
             + "."
         )
+    origin_airports = ctx.get("origin_airports") or []
+    if origin_airports and not alternatives:
+        lines.append(
+            "- Аэропорты вылета (используй реальные коды): "
+            + "; ".join(
+                f"{a['code']} {a.get('city') or a.get('name', '')}".strip()
+                for a in origin_airports[:6]
+            )
+            + "."
+        )
     dest = ctx.get("dest_airports") or []
     if dest:
         shown = dest[:15]
@@ -405,6 +415,14 @@ async def generate_itinerary(params: dict, ctx: dict | None = None) -> dict:
     return itinerary if isinstance(itinerary, dict) else demo_itinerary(params, ctx)
 
 
+def _attraction_picks(attractions: list[str], day_index: int, count: int) -> list[str]:
+    """Реальные достопримечательности на день (дневной индекс без дня прилёта)."""
+    if not attractions:
+        return []
+    start = day_index * count
+    return attractions[start : start + count]
+
+
 def demo_itinerary(params: dict, ctx: dict | None = None) -> dict:
     """Заглушка: даёт правдоподобный план на все дни (для теста без ключей)."""
     days = []
@@ -416,21 +434,18 @@ def demo_itinerary(params: dict, ctx: dict | None = None) -> dict:
     destination = params["destination"]
     origin_airport = (ctx or {}).get("origin_airport") or {}
     alternatives = list((ctx or {}).get("alternatives") or [])[:3]
+    attractions = list((ctx or {}).get("attractions") or [])
 
-    if origin_airport.get("closed"):
+    origin_airports = list((ctx or {}).get("origin_airports") or [])
+    need_ground = bool(origin_airport.get("closed")) and bool(alternatives)
+
+    if need_ground:
         status_note = (
             f"⚠️ {origin_airport.get('city') or origin} "
             f"({origin_airport.get('code', '?')}) — {origin_airport.get('reason', 'аэропорт закрыт')}. "
             "Вылетаем из ближайшего открытого аэропорта."
         )
-    else:
-        status_note = (
-            f"Аэропорт вылета: {origin_airport.get('code', '?')} "
-            f"{origin_airport.get('city', origin)}. Точные рейсы — по поиску авиабилетов."
-        )
-    departure = {
-        "status_note": status_note,
-        "options": [
+        dep_options = [
             {
                 "city": a.get("city") or a.get("name", ""),
                 "iata": a["code"],
@@ -439,11 +454,32 @@ def demo_itinerary(params: dict, ctx: dict | None = None) -> dict:
                 "note": "ближайший открытый аэропорт",
             }
             for a in alternatives
-        ],
-        "chosen": {
-            "city": (alternatives[0].get("city") or alternatives[0].get("name", "")) if alternatives else "",
-            "iata": alternatives[0]["code"] if alternatives else "",
-        },
+        ]
+        chosen_city = alternatives[0].get("city") or alternatives[0].get("name", "")
+        chosen_iata = alternatives[0]["code"]
+    else:
+        status_note = (
+            f"Аэропорт вылета: {origin_airport.get('code', '?')} "
+            f"{origin_airport.get('city', origin)}. Точные рейсы — по поиску авиабилетов."
+        )
+        dep_options = [
+            {
+                "city": a.get("city") or a.get("name", ""),
+                "iata": a.get("code", ""),
+                "airport": a.get("name", ""),
+                "ground": "",
+                "note": "аэропорт вылета",
+            }
+            for a in origin_airports[:4]
+        ]
+        chosen = origin_airports[0] if origin_airports else {}
+        chosen_city = chosen.get("city") or origin_airport.get("city", origin) or origin
+        chosen_iata = chosen.get("code") or origin_airport.get("code", "") or ""
+
+    departure = {
+        "status_note": status_note,
+        "options": dep_options,
+        "chosen": {"city": chosen_city, "iata": chosen_iata},
     }
 
     for i in range(total):
@@ -489,22 +525,36 @@ def demo_itinerary(params: dict, ctx: dict | None = None) -> dict:
         else:
             title = f"День {i + 1}: {params['format']}"
             overnight = destination
-            items = [
-                {
-                    "time": "10:00",
-                    "activity": "Основная программа дня (демо-режим: конкретные места добавит LLM)",
-                    "transport": "общественный транспорт / пешком",
-                    "cost_rub": 1000,
-                    "tips": "Возьмите удобную обувь и воду",
-                },
-                {
-                    "time": "18:00",
-                    "activity": "Вечерняя прогулка и ужин местной кухней",
-                    "transport": "пешком",
-                    "cost_rub": 1200,
-                    "tips": "Попробуйте фирменные блюда региона",
-                },
-            ]
+            picks = _attraction_picks(attractions, i - 1, 3)
+            if picks:
+                times = ("10:00", "14:00", "17:30")
+                items = [
+                    {
+                        "time": times[idx] if idx < len(times) else "10:00",
+                        "activity": f"Осмотр: {name}",
+                        "transport": "пешком / общественный транспорт",
+                        "cost_rub": 500,
+                        "tips": "Проверьте часы работы и возьмите билеты заранее",
+                    }
+                    for idx, name in enumerate(picks)
+                ]
+            else:
+                items = [
+                    {
+                        "time": "10:00",
+                        "activity": f"Главные достопримечательности ({destination})",
+                        "transport": "общественный транспорт / пешком",
+                        "cost_rub": 1000,
+                        "tips": "Возьмите удобную обувь и воду",
+                    },
+                    {
+                        "time": "18:00",
+                        "activity": "Вечерняя прогулка и ужин местной кухней",
+                        "transport": "пешком",
+                        "cost_rub": 1200,
+                        "tips": "Попробуйте фирменные блюда региона",
+                    },
+                ]
         days.append(
             {
                 "date": date.date().isoformat(),
@@ -517,14 +567,14 @@ def demo_itinerary(params: dict, ctx: dict | None = None) -> dict:
     dest_airports = list((ctx or {}).get("dest_airports") or [])
     dest_iata = next((d.get("code") for d in dest_airports if d.get("code")), "")
     chosen_iata = departure["chosen"]["iata"]
-    chosen_city = departure["chosen"]["city"] or ""
+    chosen_city = departure["chosen"]["city"] or origin
     legs = []
-    if chosen_iata:
+    if need_ground and chosen_iata:
         legs.append(
             {
                 "mode": "train",
                 "from": origin,
-                "to": chosen_city or origin,
+                "to": chosen_city,
                 "date": params["date_start"],
                 "from_iata": "",
                 "to_iata": chosen_iata,
@@ -534,7 +584,7 @@ def demo_itinerary(params: dict, ctx: dict | None = None) -> dict:
     legs.append(
         {
             "mode": "flight",
-            "from": chosen_city or origin,
+            "from": chosen_city,
             "to": destination,
             "date": params["date_start"],
             "from_iata": chosen_iata,
@@ -546,7 +596,7 @@ def demo_itinerary(params: dict, ctx: dict | None = None) -> dict:
         {
             "mode": "flight",
             "from": destination,
-            "to": chosen_city or origin,
+            "to": chosen_city,
             "date": params["date_end"],
             "from_iata": dest_iata,
             "to_iata": chosen_iata,
@@ -558,13 +608,14 @@ def demo_itinerary(params: dict, ctx: dict | None = None) -> dict:
         "route": (
             f"{origin} → "
             + (f"{departure['chosen']['city'] or 'ближайший аэропорт'} ({departure['chosen']['iata']}) → " if departure["chosen"]["iata"] else "")
-            + f"{destination} → обратно. Детальный маршрут появится после подключения LLM-ключа."
+            + f"{destination} → обратно."
         ),
         "summary": (
-            f"Демо-план: {destination} из {origin} "
+            f"Пример плана: {destination} из {origin} "
             f"({params['date_start']} — {params['date_end']}), "
-            f"формат «{params['format']}». Это заглушка — полный индивидуальный маршрут "
-            "с конкретными местами, рейсами и визой формирует LLM."
+            f"формат «{params['format']}». Точно такой же по структуре маршрут вы получите "
+            "для своего направления — с реальными рейсами и временем, отелями, экскурсиями, "
+            "бюджетом по дням и всеми ссылками."
         ),
         "departure": departure,
         "routing": {
