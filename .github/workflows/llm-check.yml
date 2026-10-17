@@ -1,0 +1,25 @@
+name: LLM check
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Groq status and sample request
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          echo "key length: ${#LLM_API_KEY}"
+          code=$(curl -s -o /tmp/models.json -w "%{http_code}" \
+            -H "Authorization: Bearer $LLM_API_KEY" \
+            https://api.groq.com/openai/v1/models)
+          echo "GET /models status: $code"
+          head -c 300 /tmp/models.json; echo
+          code2=$(curl -s -o /tmp/chat.json -w "%{http_code}" \
+            -H "Authorization: Bearer $LLM_API_KEY" -H "Content-Type: application/json" \
+            -d '{"model":"qwen/qwen3.8-27b","messages":[{"role":"user","content":"Ответь одним словом: работает?"}],"max_tokens":20}' \
+            https://api.groq.com/openai/v1/chat/completions)
+          echo "POST /chat/completions status: $code2"
+          head -c 400 /tmp/chat.json; echo
