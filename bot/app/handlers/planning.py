@@ -7,6 +7,7 @@ from app.keyboards import formats_menu, offer_menu, result_menu
 from app.render import render_plan
 from app.services.billing import send_invoice
 from app.services.planner import build_plan, parse_budget, parse_dates
+from app.services.prices import canonicalize_place
 from app.states import TripForm
 
 router = Router()
@@ -46,7 +47,10 @@ async def ask_origin(message: Message, state: FSMContext) -> None:
     if not text:
         await message.answer("Введите название страны или города.")
         return
-    await state.update_data(destination=text)
+    fixed = await canonicalize_place(text)
+    await state.update_data(destination=fixed)
+    if fixed != text:
+        await message.answer(f"📍 Принято: <b>{fixed}</b>")
     await state.set_state(TripForm.origin)
     await message.answer(_prompt_origin())
 
@@ -57,7 +61,10 @@ async def ask_dates(message: Message, state: FSMContext) -> None:
     if not text:
         await message.answer("Введите город отправления.")
         return
-    await state.update_data(origin=text)
+    fixed = await canonicalize_place(text)
+    await state.update_data(origin=fixed)
+    if fixed != text:
+        await message.answer(f"📍 Принято: <b>{fixed}</b>")
     await state.set_state(TripForm.dates)
     await message.answer(_prompt_dates())
 
