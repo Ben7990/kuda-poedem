@@ -30,46 +30,119 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
-    "Ты — эксперт-тревел-планировщик. Составляешь ДЕТАЛЬНЫЙ маршрут поездки.\n"
-    "Опирайся на реальную географию и транспорт: если из города отправления нет "
-    "прямого рейса до пункта назначения — покажи связку ЖД/авто до ближайшего "
-    "аэропорта, а затем перелёт, с учётом времени на стыковку.\n\n"
-    "Отвечай СТРОГО одним валидным JSON без пояснений, markdown-разметки и кавычек "
-    "вне JSON. Схема:\n"
+    "Ты — эксперт-тревел-планировщик, работающий с реальной географией, транспортом "
+    "и визовыми режимами. Составляешь ДЕТАЛЬНЫЙ индивидуальный маршрут поездки.\n\n"
+    "Отвечай СТРОГО одним валидным JSON без пояснений и markdown. Схема:\n"
     "{\n"
-    '  "route": "Нить маршрута целиком, например: Ростов-на-Дону → жд до Краснодара '
-    '(аэропорт Пашковский) → перелёт в Анталью → трансфер в Кемер → ... → обратно",\n'
-    '  "summary": "краткое резюме поездки (2-3 предложения), включая почему так лучше",\n'
+    '  "route": "нить маршрута целиком с IATA и транспортом, например: Ростов-на-Дону → '
+    'поезд до Краснодара (KRR) → перелёт через Стамбул (IST) в Дакку (DAC) → ...",\n'
+    '  "summary": "краткое резюме (2-3 предложения): почему выбрана такая логистика",\n'
+    '  "departure": {\n'
+    '    "status_note": "статус аэропорта вылета: открыт/закрыт/нет прямых рейсов '
+    'и что делаем",\n'
+    '    "options": [\n'
+    '      {"city": "Краснодар", "iata": "KRR", "airport": "Пашковский", "ground": '
+    '"поезд ~3 ч, ~1200 ₽", "note": "прямые рейсы в Стамбул/Анталью"}\n'
+    "    ],\n"
+    '    "chosen": {"city": "Краснодар", "iata": "KRR"}\n'
+    "  },\n"
+    '  "routing": {\n'
+    '    "hubs": ["Стамбул (IST)", "Доха (DOH)"],\n'
+    '    "airlines": ["Turkish Airlines", "Qatar Airways"],\n'
+    '    "note": "прямого рейса нет, стыковка ~4-6 ч",\n'
+    '    "approx_price_rub": 85000\n'
+    "  },\n"
+    '  "visa": "режим въезда для граждан РФ на даты поездки",\n'
+    '  "practical": ["валюта и обмен", "страховка", "связь/SIM", "безопасность"],\n'
     '  "days": [\n'
     "    {\n"
     '      "date": "2026-11-10",\n'
-    '      "title": "Перелёт и заселение",\n'
-    '      "overnight": "город, где ночуем в этот день",\n'
+    '      "title": "конкретное название дня",\n'
+    '      "overnight": "город ночёвки",\n'
     '      "items": [\n'
-    '        {"time": "06:30", "activity": "что делаем (место, достопримечательность, '
-    'экскурсия, кафе)", "transport": "как добираемся: такси/автобус/метро/аренда машины/пешком '
-    '(укажите ориентировочное время в пути)", "cost_rub": 1500, "tips": "совет"}\n'
+    '        {"time": "09:00", "activity": "КРЕКОНКРЕТНОЕ место: музей/крепость/рынок/'
+    'пляж/ресторан с названием", "transport": "как добираемся + время в пути", '
+    '"cost_rub": 1500, "tips": "совет"}\n'
     "      ]\n"
     "    }\n"
     "  ],\n"
     '  "checklist": ["вещь 1", "вещь 2"],\n'
-    '  "budget_note": "как уложиться в бюджет, резерв на непредвиденное",\n'
-    '  "advice": "когда лучше ехать в этот сезон, что учесть, пограничные нюансы"\n'
+    '  "budget_note": "как уложиться в бюджет, резерв",\n'
+    '  "advice": "сезон, пограничные нюансы, что проверить перед поездкой"\n'
     "}\n\n"
-    "Правила:\n"
-    "- Учитывай ВСЕ дни диапазона дат: количество объектов в массиве days ДОЛЖНО "
-    "быть ровно равно числу календарных дней поездки — по одному на каждый день.\n"
-    "- В каждом дне 2-4 пункта.\n"
-    "- Если для дальнего выезда нужен ночлег — добавь в тот день поле overnight в другом городе "
-    "и план возврата.\n"
-    "- Указывай транспорт и время в пути; для самостоятельных поездок сравни с экскурсией.\n"
-    "- Учитывай формат поездки, бюджет на человека и сезон.\n"
-    "- ВСЕ обязательные поля схемы (route, summary, days, checklist, budget_note, advice) "
-    "должны присутствовать; checklist — минимум 3 пункта."
+    "ЖЁСТКИЕ ПРАВИЛА:\n"
+    "1. ВСЕ даты диапазона: в days РОВНО столько объектов, сколько календарных дней "
+    "поездки (по одному на день, дата в поле date). В дне 2-4 пункта.\n"
+    "2. IATA-коды бери ТОЛЬКО из блока «ДАННЫЕ ПО АЭРОПОРТАМ» в сообщении пользователя. "
+    "Ни в коем случае не выдумывай и не используй коды аэропортов, которых нет в этом "
+    "блоке. Если нужного аэропорта нет в блоке — выбери из перечисленных ближайших "
+    "альтернатив.\n"
+    "3. Если аэропорт вылета закрыт или из него нет рейсов — блок departure ОБЯЗАТЕЛЕН: "
+    "status_note объясняет ситуацию, options — 2-3 реальных альтернативы (город, IATA, "
+    "название аэропорта) с наземной доставкой (поезд/авто: время в пути и ~цена в рублях), "
+    "chosen — лучший вариант.\n"
+    "4. Если прямых рейсов до пункта назначения нет (часто так для Африки/Южной Азии из "
+    "РФ) — routing через реальные транзитные хабы с авиакомпаниями: Стамбул (IST), Доха "
+    "(DOH), Дубай (DXB), Абу-Даби (AUH), Аддис-Абеба (ADD), Париж (CDG), Стамбул — и "
+    "т.д.; укажи стыковку и ориентировочную цену туда-обратно на человека в рублях.\n"
+    "5. АБСОЛЮТНЫЙ ЗАПРЕТ на шаблоны: нельзя писать «обзорная экскурсия», «прогулка по "
+    "городу», «свободное время», «отдых на пляже» без конкретных названий мест. Каждый "
+    "пункт — реальное место: музей, крепость, рынок, набережная, храм, пляж, ресторан — "
+    "с названием (для экзотических стран дай известные тебе реальные места, а не выдумки).\n"
+    "6. visa — режим въезда для граждан РФ на даты поездки (безвиз/виза по прилёту/e-visa/"
+    "консульство, сроки, где оформлять). Если не уверен — так и напиши: «проверьте перед "
+    "покупкой билетов».\n"
+    "7. practical — 3-5 конкретных пунктов: валюта и где менять, страховка (обязательна "
+    "для многих стран), связь/SIM, вода и еда, безопасность, транспортные приложения "
+    "(Yandex Go/Bolt/InDrive), электрика 220В и переходники.\n"
+    "8. cost_rub — реалистичные цены в рублях. Учитывай формат поездки, бюджет на "
+    "человека и сезон.\n"
+    "9. Все обязательные поля схемы (route, summary, departure, routing, visa, practical, "
+    "days, checklist, budget_note, advice) должны присутствовать. checklist — минимум 3 "
+    "пункта.\n"
 )
 
 
-def build_user_prompt(params: dict) -> str:
+def _ctx_block(ctx: dict | None) -> str:
+    if not ctx:
+        return ""
+    lines = ["", "ДАННЫЕ ПО АЭРОПОРТАМ (используй ТОЛЬКО реальные коды отсюда):"]
+    origin_airport = ctx.get("origin_airport")
+    if origin_airport:
+        status = "ЗАКРЫТ, регулярных рейсов нет" if origin_airport.get("closed") else "открыт"
+        note = f" ({origin_airport['reason']})" if origin_airport.get("closed") else ""
+        lines.append(
+            f"- Вылет: {origin_airport.get('code', '?')} "
+            f"{origin_airport.get('name', '')} {origin_airport.get('city', '')} — {status}{note}."
+        )
+    alternatives = ctx.get("alternatives") or []
+    if alternatives:
+        lines.append(
+            "- Ближайшие аэропорты вылета: "
+            + "; ".join(
+                f"{a['code']} {a.get('city') or a.get('name', '')} ({a['distance_km']} км)"
+                for a in alternatives
+            )
+            + "."
+        )
+    dest = ctx.get("dest_airports") or []
+    if dest:
+        lines.append(
+            "- Аэропорты пункта назначения: "
+            + "; ".join(
+                f"{d['code']} {d.get('city', '')} {d.get('name', '')}".strip() for d in dest
+            )
+            + "."
+        )
+    else:
+        lines.append(
+            f"- IATA для «{ctx.get('dest_label', '')}» не найден в справочнике — укажи главный "
+            "международный аэропорт страны/города сам и явно названием в маршруте."
+        )
+    return "\n".join(lines)
+
+
+def build_user_prompt(params: dict, ctx: dict | None = None) -> str:
     date_start = datetime.fromisoformat(params["date_start"])
     date_end = datetime.fromisoformat(params["date_end"])
     dates = [date_start + timedelta(days=i) for i in range((date_end - date_start).days + 1)]
@@ -80,7 +153,8 @@ def build_user_prompt(params: dict) -> str:
         f"Даты: {params['date_start']} — {params['date_end']} "
         f"({len(dates)} календарных дней: {days_list})\n"
         f"Формат: {params['format']}\n"
-        f"Бюджет: {params['budget_rub']} руб. на {params['travelers']} чел.\n"
+        f"Бюджет: {params['budget_rub']} руб. на {params['travelers']} чел."
+        f"{_ctx_block(ctx)}\n\n"
         f"В массиве days должно быть РОВНО {len(dates)} объектов — по одному на каждый "
         "из перечисленных дней, с датой каждого дня в поле date."
     )
@@ -107,7 +181,8 @@ class OpenAILLM:
         payload = {
             "model": settings.llm_model,
             "messages": messages,
-            "temperature": 0.7,
+            "temperature": 0.4,
+            "max_tokens": 6000,
         }
         # Некоторые провайдеры (OpenRouter free-модели, Groq) не поддерживают
         # response_format/json_object — пробуем с ним, при 4xx повторяем без.
@@ -204,10 +279,26 @@ def _expected_days(params: dict) -> int:
 def _validate_itinerary(it: dict, params: dict) -> str | None:
     """Возвращает описание проблемы схемы или None, если всё ок."""
     errors = []
-    required_top = ("route", "summary", "days", "checklist", "budget_note", "advice")
+    required_top = (
+        "route",
+        "summary",
+        "departure",
+        "routing",
+        "visa",
+        "practical",
+        "days",
+        "checklist",
+        "budget_note",
+        "advice",
+    )
     for key in required_top:
         if key not in it:
             errors.append(f"отсутствует поле '{key}'")
+    departure = it.get("departure")
+    if isinstance(departure, dict):
+        options = departure.get("options")
+        if not isinstance(options, list) or not options:
+            errors.append("в departure пуст options — перечисли 2-3 альтернативы вылета")
     days = it.get("days")
     if not isinstance(days, list) or not days:
         errors.append("массив days пуст")
@@ -221,17 +312,19 @@ def _validate_itinerary(it: dict, params: dict) -> str | None:
                     errors.append(f"в дне {d.get('date')} отсутствует '{key}'")
     if isinstance(it.get("checklist"), list) and len(it["checklist"]) < 3:
         errors.append("в checklist меньше 3 пунктов")
+    if isinstance(it.get("practical"), list) and len(it["practical"]) < 1:
+        errors.append("practical пуст — добавь 3-5 практических советов")
     return "; ".join(errors) if errors else None
 
 
-async def generate_itinerary(params: dict) -> dict:
+async def generate_itinerary(params: dict, ctx: dict | None = None) -> dict:
     if not settings.llm_enabled:
         logger.info("LLM не настроен, используем демо-маршрут")
-        return demo_itinerary(params)
+        return demo_itinerary(params, ctx)
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": build_user_prompt(params)},
+        {"role": "user", "content": build_user_prompt(params, ctx)},
     ]
     client = get_client()
     for attempt in range(2):
@@ -256,15 +349,49 @@ async def generate_itinerary(params: dict) -> dict:
                 ),
             }]
     logger.warning("LLM не смог пройти проверку схемы за 2 попытки, отдаю лучший вариант")
-    return itinerary if isinstance(itinerary, dict) else demo_itinerary(params)
+    return itinerary if isinstance(itinerary, dict) else demo_itinerary(params, ctx)
 
 
-def demo_itinerary(params: dict) -> dict:
+def demo_itinerary(params: dict, ctx: dict | None = None) -> dict:
     """Заглушка: даёт правдоподобный план на все дни (для теста без ключей)."""
     days = []
     start = datetime.fromisoformat(params["date_start"])
     end = datetime.fromisoformat(params["date_end"])
     total = (end - start).days + 1
+
+    origin = params["origin"]
+    destination = params["destination"]
+    origin_airport = (ctx or {}).get("origin_airport") or {}
+    alternatives = list((ctx or {}).get("alternatives") or [])[:3]
+
+    if origin_airport.get("closed"):
+        status_note = (
+            f"⚠️ {origin_airport.get('city') or origin} "
+            f"({origin_airport.get('code', '?')}) — {origin_airport.get('reason', 'аэропорт закрыт')}. "
+            "Вылетаем из ближайшего открытого аэропорта."
+        )
+    else:
+        status_note = (
+            f"Аэропорт вылета: {origin_airport.get('code', '?')} "
+            f"{origin_airport.get('city', origin)}. Точные рейсы — по поиску авиабилетов."
+        )
+    departure = {
+        "status_note": status_note,
+        "options": [
+            {
+                "city": a.get("city") or a.get("name", ""),
+                "iata": a["code"],
+                "airport": a.get("name", ""),
+                "ground": f"наземный трансфер ~{a['distance_km']} км (поезд/авто — расписание уточните)",
+                "note": "ближайший открытый аэропорт",
+            }
+            for a in alternatives
+        ],
+        "chosen": {
+            "city": (alternatives[0].get("city") or alternatives[0].get("name", "")) if alternatives else "",
+            "iata": alternatives[0]["code"] if alternatives else "",
+        },
+    }
 
     for i in range(total):
         date = start + timedelta(days=i)
@@ -273,14 +400,14 @@ def demo_itinerary(params: dict) -> dict:
             items = [
                 {
                     "time": "07:00",
-                    "activity": f"Выезд из {params['origin']} (жд/авто до ближайшего аэропорта)",
-                    "transport": "жд до аэропорта",
+                    "activity": f"Выезд из {origin} до ближайшего открытого аэропорта",
+                    "transport": "жд/авто — время уточните по расписанию",
                     "cost_rub": 2500,
                     "tips": "Закладывайте 3-4 ч запаса на стыковку и регистрацию",
                 },
                 {
                     "time": "15:00",
-                    "activity": f"Поселение и прогулка по {params['destination']}",
+                    "activity": f"Поселение и прогулка по {destination}",
                     "transport": "трансфер / такси",
                     "cost_rub": 1500,
                     "tips": "Уточните ранний заезд заранее",
@@ -305,49 +432,60 @@ def demo_itinerary(params: dict) -> dict:
                 },
             ]
         else:
-            title = f"День {i + 1}: экскурсионная программа"
+            title = f"День {i + 1}: {params['format']}"
             items = [
                 {
-                    "time": "09:30",
-                    "activity": "Обзорная экскурсия (исторический центр / главные достопримечательности)",
+                    "time": "10:00",
+                    "activity": "Основная программа дня (демо-режим: конкретные места добавит LLM)",
                     "transport": "общественный транспорт / пешком",
                     "cost_rub": 1000,
                     "tips": "Возьмите удобную обувь и воду",
                 },
                 {
-                    "time": "14:00",
-                    "activity": "Обед в местном кафе и прогулка",
+                    "time": "18:00",
+                    "activity": "Вечерняя прогулка и ужин местной кухней",
                     "transport": "пешком",
                     "cost_rub": 1200,
-                    "tips": "Пробуйте местную кухню",
-                },
-                {
-                    "time": "18:00",
-                    "activity": "Закат, фотосессия, свободное время",
-                    "transport": "пешком",
-                    "cost_rub": 0,
-                    "tips": "Закладывайте время на возвращение отелем",
+                    "tips": "Попробуйте фирменные блюда региона",
                 },
             ]
         days.append(
             {
                 "date": date.date().isoformat(),
                 "title": title,
-                "overnight": params["destination"],
+                "overnight": destination,
                 "items": items,
             }
         )
 
     return {
         "route": (
-            f"{params['origin']} → ближайший аэропорт → {params['destination']} → обратно. "
-            "Детальный маршрут и цены появятся после подключения LLM-ключа."
+            f"{origin} → "
+            + (f"{departure['chosen']['city'] or 'ближайший аэропорт'} ({departure['chosen']['iata']}) → " if departure["chosen"]["iata"] else "")
+            + f"{destination} → обратно. Детальный маршрут появится после подключения LLM-ключа."
         ),
         "summary": (
-            f"Демо-план: {params['destination']} из {params['origin']} "
+            f"Демо-план: {destination} из {origin} "
             f"({params['date_start']} — {params['date_end']}), "
-            f"формат «{params['format']}»."
+            f"формат «{params['format']}». Это заглушка — полный индивидуальный маршрут "
+            "с конкретными местами, рейсами и визой формирует LLM."
         ),
+        "departure": departure,
+        "routing": {
+            "hubs": ["Стамбул (IST)", "Доха (DOH)", "Дубай (DXB)"],
+            "airlines": [],
+            "note": "демо-режим: реальные транзитные хабы и авиакомпании укажет LLM-план",
+            "approx_price_rub": None,
+        },
+        "visa": (
+            "Демо-режим: проверьте визовый режим для граждан РФ в консульстве страны назначения "
+            "(обычно загранпаспорт действует ≥6 мес. после въезда)."
+        ),
+        "practical": [
+            "Демо-режим: практические советы (валюта, связь, безопасность) добавит LLM-план.",
+            "Оформите медицинскую страховку — для многих стран она обязательна.",
+            "Проверьте актуальные ограничения на вылет из своего аэропорта.",
+        ],
         "days": days,
         "checklist": [
             "Загранпаспорт и виза (если нужна)",
@@ -357,5 +495,5 @@ def demo_itinerary(params: dict) -> dict:
             "Зарядки и пауэрбанк",
         ],
         "budget_note": "Держите резерв ~10% бюджета на непредвиденное.",
-        "advice": "Демо-режим: добавьте ключ LLM (GigaChat или OpenAI), чтобы получить реальный маршрут.",
+        "advice": "Демо-режим: добавьте ключ LLM, чтобы получить реальный индивидуальный маршрут.",
     }

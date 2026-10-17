@@ -6,7 +6,7 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8")
 
 from app.render import render_plan
-from app.services import affiliate, planner, prices
+from app.services import affiliate, llm, planner, prices
 
 PASS = 0
 FAIL = 0
@@ -72,8 +72,65 @@ async def test_affiliate() -> None:
     check("URL корректно закодирован", "%D0%9A" in links["hotels"])
 
 
+async def test_airport_context() -> None:
+    global SKIP
+    print("[4] контекст аэропортов (закрытые/альтернативы/страны)")
+    check("закрытые: Ростов (ROV)", prices.is_closed("ROV"))
+    check("закрытые: Воронеж (VOZ)", prices.is_closed("VOZ"))
+    check("открытые: Краснодар (KRR)", not prices.is_closed("KRR"))
+    try:
+        rosters = await prices.departure_alternatives("Ростов-на-Дону")
+    except Exception as exc:
+        SKIP += 1
+        print(f"  - датасеты недоступны ({exc}), пропуск")
+        return
+    check("Ростов: есть альтернативы", len(rosters) >= 2)
+    codes = [a["code"] for a in rosters]
+    check(f"Ростов: среди альтернатив нет закрытого ROV ({codes})", "ROV" not in codes)
+    check("Ростов: KRR — первый (крупный хаб)", codes[0] == "KRR")
+    check("Ростов: у альтернатив есть расстояние", all(a["distance_km"] > 0 for a in rosters))
+    dhaka = await prices.destination_airports("Бангладеш")
+    check("Бангладеш -> DAC", [d["code"] for d in dhaka] == ["DAC"])
+    ouaga = await prices.destination_airports("Буркина-Фасо")
+    check("Буркина-Фасо -> OUA", [d["code"] for d in ouaga] == ["OUA"])
+    kemer = await prices.destination_airports("Кемер, Турция")
+    check("Кемер -> AYT", kemer and kemer[0]["code"] == "AYT")
+    ctx = await prices.travel_context(
+        {"origin": "Ростов-на-Дону", "destination": "Бангладеш"}
+    )
+    check("ctx: аэропорт вылета закрыт", bool(ctx["origin_airport"]["closed"]))
+    check("ctx: альтернативы заполнены", len(ctx["alternatives"]) >= 2)
+    check("ctx: назначение DAC", [d["code"] for d in ctx["dest_airports"]] == ["DAC"])
+
+
+def test_validation() -> None:
+    print("[5] валидация схемы LLM")
+    params = {"date_start": "2026-11-10", "date_end": "2026-11-11"}
+    good = {
+        "route": "R",
+        "summary": "S",
+        "departure": {"status_note": "n", "options": [{"city": "К", "iata": "KRD"}], "chosen": {"iata": "KRD"}},
+        "routing": {"hubs": ["IST"]},
+        "visa": "безвиз",
+        "practical": ["валюта"],
+        "days": [{"date": "2026-11-10", "title": "T", "items": []},
+                 {"date": "2026-11-11", "title": "T", "items": []}],
+        "checklist": ["a", "b", "c"],
+        "budget_note": "b",
+        "advice": "a",
+    }
+    check("валидная схема проходит", llm._validate_itinerary(good, params) is None)
+    bad = {**good}
+    del bad["departure"]
+    check("нет departure — ошибка", "departure" in (llm._validate_itinerary(bad, params) or ""))
+    empty_dep = {**good, "departure": {"status_note": "n", "options": []}}
+    check("пустой options — ошибка", "options" in (llm._validate_itinerary(empty_dep, params) or ""))
+    short = {**good, "days": good["days"][:1]}
+    check("меньше дней — ошибка", "должно быть" in (llm._validate_itinerary(short, params) or ""))
+
+
 async def test_plan() -> None:
-    print("[5] сборка плана (demo) и рендер")
+    print("[6] сборка плана (demo) и рендер")
     data = {
         "destination": "Кемер, Турция",
         "origin": "Ростов-на-Дону",
@@ -87,11 +144,18 @@ async def test_plan() -> None:
     check("demo: нет цен без токена", plan["real_prices"] == [],)
     check("demo: есть summary", bool(plan["itinerary"]["summary"]))
     check("demo: есть дни", len(plan["itinerary"]["days"]) >= 1)
+    check("demo: есть блок вылета", bool(plan["itinerary"]["departure"]["status_note"]))
+    check("demo: есть виза", bool(plan["itinerary"]["visa"]))
+    check("demo: есть практика", len(plan["itinerary"]["practical"]) >= 1)
+    check("demo: ссылка на авиа не из закрытого ROV", "ROV" not in plan["links"]["flights"])
 
     plan["real_prices"] = [{"price": 14500, "airline": "S7", "depart_date": "2026-11-10"}]
     chunks = render_plan(plan)
     text = "\n".join(chunks)
     check("рендер: блок цен", "Реальные цены" in text)
+    check("рендер: блок вылета", "Вылет" in text)
+    check("рендер: блок маршрута", "Как долететь" in text)
+    check("рендер: практика", "На месте" in text)
     check("рендер: чек-лист", "Чек-лист" in text)
     check("рендер: ссылки", "Авиабилеты" in text)
     check("рендер: длина < лимит", all(len(c) <= 4096 for c in chunks))
@@ -104,6 +168,8 @@ async def main() -> None:
     test_prices_parsing()
     await test_iata()
     await test_affiliate()
+    await test_airport_context()
+    test_validation()
     await test_plan()
     print(f"\nИТОГО: {PASS} passed, {FAIL} failed, {SKIP} skipped")
     raise SystemExit(1 if FAIL else 0)

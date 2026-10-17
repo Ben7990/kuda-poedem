@@ -63,18 +63,28 @@ def build_params(state_data: dict) -> dict:
 
 
 async def build_plan(state_data: dict, demo: bool = False) -> dict:
+    from app.services import prices
+
     params = build_params(state_data)
-    itinerary = demo_itinerary(params) if demo else await generate_itinerary(params)
+    ctx = await prices.travel_context(params)
+    itinerary = demo_itinerary(params, ctx) if demo else await generate_itinerary(params, ctx)
+
+    dep_iata = (((itinerary.get("departure") or {}).get("chosen")) or {}).get("iata")
+    if not dep_iata and ctx.get("alternatives"):
+        dep_iata = ctx["alternatives"][0].get("code")
+    dest_iata = next((d.get("code") for d in (ctx.get("dest_airports") or []) if d.get("code")), None)
+
     links = await affiliate.all_links(
         origin=params["origin"],
         destination=params["destination"],
         date_start=params["date_start"],
         date_end=params["date_end"],
+        travelers=params["travelers"],
+        origin_iata=dep_iata,
+        dest_iata=dest_iata,
     )
     real_prices: list[dict] = []
     if not demo:
-        from app.services import prices
-
         real_prices = await prices.get_best_flights(
             origin=params["origin"],
             destination=params["destination"],

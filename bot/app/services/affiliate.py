@@ -84,17 +84,24 @@ async def all_links(
     date_start: str,
     date_end: str,
     travelers: int = 2,
+    origin_iata: str | None = None,
+    dest_iata: str | None = None,
 ) -> dict:
     """Собирает пакет ссылок-подборок.
 
+    origin_iata/dest_iata — готовые коды (например, выбранный аэропорт вылета
+    из плана); если не заданы — резолвятся по названиям.
     Ключи: flights, trains, hotels, tours — под render.py.
     """
     from app.services import prices
 
-    origin_iata, dest_iata = await asyncio.gather(
-        prices.resolve_iata(origin),
-        prices.resolve_iata(destination),
-    )
+    if not origin_iata or not dest_iata:
+        resolved_origin, resolved_dest = await asyncio.gather(
+            prices.resolve_iata(origin),
+            prices.resolve_iata(destination),
+        )
+        origin_iata = origin_iata or resolved_origin
+        dest_iata = dest_iata or resolved_dest
 
     return {
         "flights": flights_link(origin_iata, dest_iata, date_start, date_end, travelers),
