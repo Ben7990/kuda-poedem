@@ -48,7 +48,7 @@ py run.py
 | `LLM_PROVIDER` | `openai` (по умолчанию) или `gigachat`; `auto` выберет сам |
 | `LLM_API_KEY` | ключ LLM-провайдера (от 0 ₽: бесплатные модели OpenRouter/Groq) |
 | `LLM_BASE_URL` | базовый URL API (OpenAI / OpenRouter / Groq / DeepSeek) |
-| `LLM_MODEL` | модель (например `gpt-4o-mini`, `meta-llama/llama-3.3-70b-instruct:free`) |
+| `LLM_MODEL` | модель (например `gpt-4o-mini`, `qwen/qwen3.8-27b`) |
 | `GIGACHAT_CLIENT_ID` / `GIGACHAT_CLIENT_SECRET` | запасной вариант для РФ (необязательно) |
 | `AVIASALES_MARKER` | партнёрский маркер Aviasales/Travelpayouts |
 | `OSTROVOK_PARTNER_ID` | ID партнёра Ostrovok |
@@ -56,6 +56,11 @@ py run.py
 | `PAYMENTS_PROVIDER_TOKEN` | токен провайдера оплат @BotFather (ЮKassa) — пусто = демо |
 | `PRICE_PER_TRIP_RUB` | цена полного маршрута в рублях, по умолчанию 690 |
 | `CACHE_DIR` | папка кэша IATA-данных (по умолчанию системный temp) |
+
+> ⚠️ **Важно про Groq:** Groq отдаёт `403 Forbidden` на запросы с российских
+> IP, при этом ключ остаётся рабочим. Поэтому запускать бота с Groq нужно
+> на GitHub Actions (или через VPN) — при локальном запуске из РФ LLM
+> недоступен и бот автоматически показывает демо-план.
 
 ## 🗺 Сценарий
 
