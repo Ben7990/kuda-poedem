@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Планировщик путешествий — маршрут по дням, билеты, отели, экскурсии</title>
+  <meta name="description" content="Введите куда, откуда, даты, формат и бюджет — получите готовый маршрут по дням со ссылками на билеты, отели и экскурсии. Телеграм-бот планировщик путешествий.">
+  <style>
+    :root { --a: #1f6feb; --bg: #f6f8fa; --tx: #24292f; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); color: var(--tx); line-height: 1.6; }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+    header { background: linear-gradient(135deg, #0b57d0, #1f6feb); color: #fff; padding: 56px 16px; text-align: center; }
+    header h1 { font-size: 2rem; margin-bottom: 12px; }
+    header p { font-size: 1.1rem; opacity: .95; }
+    .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 32px 0; }
+    .step { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .step b { display: block; margin-bottom: 6px; color: var(--a); }
+    .btn { display: inline-block; background: var(--a); color: #fff; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-size: 1.05rem; margin: 8px 0; }
+    .btn:hover { background: #0b57d0; }
+    .motto { background: #fff; border-radius: 10px; padding: 24px; margin: 24px 0; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .motto h2 { margin-bottom: 8px; }
+    .contacts { text-align: center; color: #57606a; font-size: .95rem; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>🧭 Планировщик путешествий</h1>
+      <p>5 вопросов → готовый маршрут по дням со ссылками на билеты, отели и экскурсии</p>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <section class="steps">
+      <div class="step"><b>1. Куда</b>страна и города, можно несколько</div>
+      <div class="step"><b>2. Откуда</b>удобный город и аэропорт вылета</div>
+      <div class="step"><b>3. Даты</b>период поездки</div>
+      <div class="step"><b>4. Формат</b>отдых, культура, экстрим, тревел-блог</div>
+      <div class="step"><b>5. Бюджет</b>на сколько рассчитываете</div>
+    </section>
+
+    <section class="motto">
+      <h2>Как это работает</h2>
+      <p>Умный планировщик строит маршрут по дням с учётом логистики и сезона:
+      показывает, как добраться, что посетить, где переночевать и на чём сэкономить.
+      Каждый пункт сопровождается ссылкой на актуальные билеты, отели и экскурсии.</p>
+      <p><a class="btn" href="https://t.me/ваш_бот" rel="nofollow noopener">Начать в Telegram</a></p>
+    </section>
+
+    <section class="motto">
+      <h2>Пример: Кемер, 10 дней, культура</h2>
+      <p>Пара из Ростова-на-Дону планирует поездку в Кемер с 10 по 20 ноября на 180 000 ₽.
+      Сервис подберёт жд до ближайшего аэропорта, билеты с учётом стыковки, отели в бюджете
+      и экскурсии: Фазелис, Каппадокия и другие — с вариантами «самостоятельно» или «с гидом».</p>
+    </section>
+
+    <div class="contacts">Планируйте заранее и путешествуйте дёшево 🌍</div>
+  </div>
+</body>
+</html>
