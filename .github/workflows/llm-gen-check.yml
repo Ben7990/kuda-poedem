@@ -1,0 +1,23 @@
+name: LLM gen check
+on:
+  workflow_dispatch:
+
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: bot
+    env:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_PROVIDER: openai
+      LLM_BASE_URL: https://api.groq.com/openai/v1
+      LLM_MODEL: qwen/qwen3.8-27b
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install httpx pydantic-settings
+      - run: python -X utf8 _gencheck.py
