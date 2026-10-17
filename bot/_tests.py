@@ -66,10 +66,16 @@ async def test_iata() -> None:
 async def test_affiliate() -> None:
     print("[4] генерация ссылок")
     links = await affiliate.all_links("Ростов-на-Дону", "Кемер, Турция", "2026-11-10", "2026-11-20")
-    check("4 типа ссылок", set(links) == {"flights", "hotels", "tours", "trains"})
+    check("ключи ссылок", set(links) == {"flights", "hotels", "tours", "trains"})
     check("ссылка авиа содержит домен", "aviasales.ru" in links["flights"])
-    check("ссылка отелей содержит домен", "ostrovok.ru" in links["hotels"])
-    check("URL корректно закодирован", "%D0%9A" in links["hotels"])
+    check("отели — список сервисов", isinstance(links["hotels"], list) and len(links["hotels"]) >= 3)
+    check("среди отелей есть Авиасейлс", any("aviasales.ru" in h["url"] for h in links["hotels"]))
+    check("отели: город закодирован", any("%D0%9A" in h["url"] for h in links["hotels"]))
+    check("экскурсии — Tripster", any("tripster.ru" in t["url"] for t in links["tours"]))
+    check("ЖД для Кемер — есть Яндекс.Расписания",
+          bool(links["trains"]) and "rasp.yandex.ru" in links["trains"])
+    far = await affiliate.all_links("Ростов-на-Дону", "Бангладеш", "2026-11-10", "2026-11-20")
+    check("ЖД для Бангладеш — нет (только авиа)", far["trains"] is None)
 
 
 async def test_airport_context() -> None:
@@ -90,17 +96,24 @@ async def test_airport_context() -> None:
     check("Ростов: KRR — первый (крупный хаб)", codes[0] == "KRR")
     check("Ростов: у альтернатив есть расстояние", all(a["distance_km"] > 0 for a in rosters))
     dhaka = await prices.destination_airports("Бангладеш")
-    check("Бангладеш -> DAC", [d["code"] for d in dhaka] == ["DAC"])
+    check("Бангладеш -> есть DAC", any(d["code"] == "DAC" for d in dhaka))
     ouaga = await prices.destination_airports("Буркина-Фасо")
-    check("Буркина-Фасо -> OUA", [d["code"] for d in ouaga] == ["OUA"])
+    check("Буркина-Фасо -> есть OUA", any(d["code"] == "OUA" for d in ouaga))
     kemer = await prices.destination_airports("Кемер, Турция")
     check("Кемер -> AYT", kemer and kemer[0]["code"] == "AYT")
+    bangla = await prices.country_airports("Бангладеш")
+    check("страна Бангладеш: есть DAC", any(a["code"] == "DAC" for a in bangla))
+    thai = await prices.country_airports("Таиланд")
+    check("страна Таиланд: есть BKK", any(a["code"] == "BKK" for a in thai))
+    check("resolve_country Бангладеш -> BD", await prices.resolve_country("Бангладеш") == "BD")
+    check("resolve_country Ростов -> None", await prices.resolve_country("Ростов-на-Дону") is None)
     ctx = await prices.travel_context(
         {"origin": "Ростов-на-Дону", "destination": "Бангладеш"}
     )
     check("ctx: аэропорт вылета закрыт", bool(ctx["origin_airport"]["closed"]))
     check("ctx: альтернативы заполнены", len(ctx["alternatives"]) >= 2)
-    check("ctx: назначение DAC", [d["code"] for d in ctx["dest_airports"]] == ["DAC"])
+    check("ctx: назначение DAC (среди прочих)", any(d["code"] == "DAC" for d in ctx["dest_airports"]))
+    check("ctx: есть ключ attractions", "attractions" in ctx)
 
 
 def test_validation() -> None:
@@ -148,6 +161,7 @@ async def test_plan() -> None:
     check("demo: есть виза", bool(plan["itinerary"]["visa"]))
     check("demo: есть практика", len(plan["itinerary"]["practical"]) >= 1)
     check("demo: ссылка на авиа не из закрытого ROV", "ROV" not in plan["links"]["flights"])
+    check("demo: отели — список сервисов", isinstance(plan["links"]["hotels"], list) and len(plan["links"]["hotels"]) >= 1)
 
     plan["real_prices"] = [{"price": 14500, "airline": "S7", "depart_date": "2026-11-10"}]
     chunks = render_plan(plan)

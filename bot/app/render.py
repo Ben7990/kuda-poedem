@@ -109,10 +109,25 @@ def render_plan(plan: dict) -> list[str]:
 
     parts.append("")
     parts.append("<b>🔗 Забронировать</b>")
-    parts.append(f'  ✈️ <a href="{links["flights"]}">Авиабилеты</a>')
-    parts.append(f'  🚆 <a href="{links["trains"]}">ЖД билеты</a>')
-    parts.append(f'  🏨 <a href="{links["hotels"]}">Отели</a>')
-    parts.append(f'  🎟 <a href="{links["tours"]}">Экскурсии</a>')
+    parts.append(f'  ✈️ <a href="{escape(str(links["flights"]), quote=True)}">Авиабилеты</a>')
+    if links.get("trains"):
+        parts.append(
+            f'  🚆 <a href="{escape(str(links["trains"]), quote=True)}">ЖД (Яндекс.Расписания)</a>'
+        )
+    hotels = links.get("hotels") or []
+    if hotels:
+        items = ", ".join(
+            f'<a href="{escape(str(h["url"]), quote=True)}">{escape(str(h["label"]))}</a>'
+            for h in hotels
+        )
+        parts.append(f"  🏨 Отели: {items}")
+    tours = links.get("tours") or []
+    if tours:
+        items = ", ".join(
+            f'<a href="{escape(str(t["url"]), quote=True)}">{escape(str(t["label"]))}</a>'
+            for t in tours
+        )
+        parts.append(f"  🎟 Экскурсии: {items}")
 
     return _chunk("\n".join(parts))
 

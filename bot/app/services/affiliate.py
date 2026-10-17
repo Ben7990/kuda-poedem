@@ -1,36 +1,40 @@
-"""Генерация партнёрских/поисковых ссылок.
+"""Генерация поисковых/партнёрских ссылок.
 
 Проверенные рабочие форматы (октябрь 2026):
 - Авиа: https://www.aviasales.ru/search/{ORIGIN}{ДДММ}{DEST}{ДДММ}{pax}
+- Отели (Авиасейлс): https://www.aviasales.ru/hotels?query={город}&checkIn=..&checkOut=..
+- Отели (Яндекс Путешествия): https://travel.yandex.ru/hotels/search/?query={город}&checkin=..&checkout=..
+- Отели (Booking): https://www.booking.com/searchresults.html?ss={город}&checkin=..&checkout=..
+- Отели (OneTwoTrip): https://www.onetwotrip.com/ru/hotels/
 - Экскурсии: https://experience.tripster.ru/search/?q={город}
-- ЖД: https://www.tutu.ru/poezda/rasp.php?st1={код}&st2={код} (коды станций)
-- Отели: https://ostrovok.ru/search/?query={город}&checkin=..&checkout=.. (виджет Островка)
+- ЖД: https://rasp.yandex.ru/search/train/?fromName=..&toName=..&when=ДД.ММ.ГГГГ
 """
 
 from datetime import datetime
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 import asyncio
 
 from app.config import settings
 
-# Коды станций (для Tutu rasp.php). Проверены: Краснодар-1, Сочи.
-RAILWAY_STATION_CODES = {
-    "краснодар": "110423",
-    "краснодар1": "110423",
-    "сочи": "106023",
-    # Партнёры с кодом — добавить после проверки в Tutu.
+# Страны, между которыми имеет смысл показывать ЖД-ссылку
+# (бывший СССР + Европа + Монголия/Китай). Для остальных — только авиа.
+RAIL_COUNTRIES = {
+    "RU", "BY", "UA", "MD", "KZ", "KG", "UZ", "TJ", "TM", "AM", "GE", "AZ",
+    "MN", "CN", "FI", "EE", "LV", "LT", "PL", "SK", "CZ", "DE", "AT", "HU",
+    "RO", "BG", "RS", "HR", "SI", "BA", "ME", "MK", "AL", "GR", "IT", "FR",
+    "ES", "PT", "NL", "BE", "DK", "SE", "NO", "CH", "GB", "IE", "TR",
 }
-
-
-def _station_code(city: str) -> str | None:
-    norm = "".join(ch for ch in city.lower() if ch.isalnum())
-    return RAILWAY_STATION_CODES.get(norm)
 
 
 def _ddmm(iso_date: str) -> str:
     d = datetime.fromisoformat(iso_date)
     return f"{d.day:02d}{d.month:02d}"
+
+
+def _city_name(text: str) -> str:
+    """«Кемер, Турция» -> «Кемер»."""
+    return (str(text).split(",")[0] or "").strip()
 
 
 def flights_link(origin_iata: str, dest_iata: str, date_start: str, date_end: str, travelers: int = 2) -> str:
@@ -48,34 +52,84 @@ def flights_link(origin_iata: str, dest_iata: str, date_start: str, date_end: st
     return base + "?" + urlencode(params)
 
 
-def hotels_link(destination: str, date_start: str, date_end: str, adults: int = 2) -> str:
-    d1 = datetime.strptime(date_start, "%Y-%m-%d")
-    d2 = datetime.strptime(date_end, "%Y-%m-%d")
-    params = {
-        "query": destination,
-        "checkin": d1.strftime("%d.%m.%Y"),
-        "checkout": d2.strftime("%d.%m.%Y"),
-        "adults": adults,
-    }
+def hotels_links(destination: str, date_start: str, date_end: str, adults: int = 2) -> list[dict]:
+    """Набор ссылок на подбор отелей в разных сервисах."""
+    city = _city_name(destination)
+    d1 = datetime.strptime(date_start, "%Y-%m-%d").strftime("%Y-%m-%d")
+    d2 = datetime.strptime(date_end, "%Y-%m-%d").strftime("%Y-%m-%d")
+    links: list[dict] = [
+        {
+            "label": "Авиасейлс Отели",
+            "url": "https://www.aviasales.ru/hotels?"
+            + urlencode({"query": city, "checkIn": d1, "checkOut": d2, "adults": adults}),
+        },
+        {
+            "label": "Яндекс Путешествия",
+            "url": "https://travel.yandex.ru/hotels/search/?"
+            + urlencode({"query": city, "checkin": d1, "checkout": d2, "adults": adults}),
+        },
+        {
+            "label": "Booking.com",
+            "url": "https://www.booking.com/searchresults.html?"
+            + urlencode(
+                {
+                    "ss": city,
+                    "checkin": d1,
+                    "checkout": d2,
+                    "group_adults": adults,
+                    "no_rooms": 1,
+                    "group_children": 0,
+                }
+            ),
+        },
+        {
+            "label": "OneTwoTrip",
+            "url": "https://www.onetwotrip.com/ru/hotels/",
+        },
+    ]
     if settings.ostrovok_partner_id:
-        params["partner"] = settings.ostrovok_partner_id
-    return "https://ostrovok.ru/search/?" + urlencode(params)
+        links.append(
+            {
+                "label": "Ostrovok",
+                "url": "https://ostrovok.ru/hotels/?" + urlencode({"query": city, "partner": settings.ostrovok_partner_id}),
+            }
+        )
+    return links
 
 
-def tours_link(destination: str) -> str:
-    params = {"q": destination}
-    return "https://experience.tripster.ru/search/?" + urlencode(params)
+def tours_links(destination: str) -> list[dict]:
+    city = _city_name(destination)
+    return [
+        {
+            "label": "Tripster (экскурсии)",
+            "url": "https://experience.tripster.ru/search/?" + urlencode({"q": city}),
+        },
+    ]
 
 
-def trains_link(origin: str, destination: str, date_start: str) -> str:
-    from_code = _station_code(origin)
-    to_code = _station_code(destination)
-    if from_code and to_code:
-        params = {"st1": from_code, "st2": to_code}
-        d = datetime.strptime(date_start, "%Y-%m-%d")
-        params["date"] = d.strftime("%d.%m.%Y")
-        return "https://www.tutu.ru/poezda/rasp.php?" + urlencode(params)
-    return "https://ticket.rzd.ru/"
+def trains_link(
+    origin: str,
+    destination: str,
+    date_start: str,
+    origin_country: str | None = None,
+    dest_country: str | None = None,
+) -> str | None:
+    """Ссылка на расписание поездов (Яндекс.Расписания) или None, если ЖД неуместен."""
+    from_city = _city_name(origin)
+    to_city = _city_name(destination)
+    if not from_city or not to_city:
+        return None
+    if origin_country and dest_country:
+        if origin_country not in RAIL_COUNTRIES or dest_country not in RAIL_COUNTRIES:
+            return None
+    try:
+        when = datetime.strptime(date_start, "%Y-%m-%d").strftime("%d.%m.%Y")
+    except (TypeError, ValueError):
+        when = ""
+    params = {"fromName": from_city, "toName": to_city}
+    if when:
+        params["when"] = when
+    return "https://rasp.yandex.ru/search/train/?" + urlencode(params)
 
 
 async def all_links(
@@ -86,12 +140,15 @@ async def all_links(
     travelers: int = 2,
     origin_iata: str | None = None,
     dest_iata: str | None = None,
+    destination_city: str | None = None,
 ) -> dict:
     """Собирает пакет ссылок-подборок.
 
     origin_iata/dest_iata — готовые коды (например, выбранный аэропорт вылета
     из плана); если не заданы — резолвятся по названиям.
-    Ключи: flights, trains, hotels, tours — под render.py.
+    destination_city — конкретный город для отелей/экскурсий (если назначение —
+    страна, сюда передаём главный город).
+    Ключи: flights (str), hotels (list), tours (list), trains (str|None).
     """
     from app.services import prices
 
@@ -103,22 +160,26 @@ async def all_links(
         origin_iata = origin_iata or resolved_origin
         dest_iata = dest_iata or resolved_dest
 
+    origin_country, dest_country = await asyncio.gather(
+        prices.country_for(origin),
+        prices.country_for(destination),
+    )
+
+    city_for_travel = destination_city or destination
     return {
         "flights": flights_link(origin_iata, dest_iata, date_start, date_end, travelers),
-        "trains": trains_link(origin, destination, date_start),
-        "hotels": hotels_link(destination, date_start, date_end, travelers),
-        "tours": tours_link(destination),
+        "hotels": hotels_links(city_for_travel, date_start, date_end, travelers),
+        "tours": tours_links(city_for_travel),
+        "trains": trains_link(origin, destination, date_start, origin_country, dest_country),
     }
 
 
 def search_hints() -> str:
     hints = []
     if settings.aviasales_marker:
-        hints.append("авиа с партнёрским маркером ✓")
+        hints.append("авиа/отели с партнёрским маркером ✓")
     else:
         hints.append("без партнёрского маркера")
     if settings.ostrovok_partner_id:
-        hints.append("отели с ID партнёра ✓")
-    else:
-        hints.append("отели без ID партнёра")
+        hints.append("отели Ostrovok с ID партнёра ✓")
     return "; ".join(hints)

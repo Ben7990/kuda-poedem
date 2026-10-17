@@ -74,6 +74,13 @@ async def build_plan(state_data: dict, demo: bool = False) -> dict:
         dep_iata = ctx["alternatives"][0].get("code")
     dest_iata = next((d.get("code") for d in (ctx.get("dest_airports") or []) if d.get("code")), None)
 
+    # Если пункт назначения — страна, для отелей/экскурсий берём её главный город.
+    dest_city = None
+    if await prices.resolve_country(params["destination"]):
+        dest_city = next(
+            (d.get("city") for d in (ctx.get("dest_airports") or []) if d.get("city")), None
+        )
+
     links = await affiliate.all_links(
         origin=params["origin"],
         destination=params["destination"],
@@ -82,6 +89,7 @@ async def build_plan(state_data: dict, demo: bool = False) -> dict:
         travelers=params["travelers"],
         origin_iata=dep_iata,
         dest_iata=dest_iata,
+        destination_city=dest_city,
     )
     real_prices: list[dict] = []
     if not demo:

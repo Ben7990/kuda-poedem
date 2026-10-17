@@ -23,12 +23,24 @@ AIRPORTS_URL = "https://api.travelpayouts.com/data/ru/airports.json"
 CITIES_URL = "https://api.travelpayouts.com/data/ru/cities.json"
 SEARCH_URL = "http://api.travelpayouts.com/v1/prices/cheap"
 MONTHLY_URL = "http://api.travelpayouts.com/v1/prices/monthly"
+COUNTRIES_SPARQL_URL = "https://query.wikidata.org/sparql"
+
+_countries_query = """
+SELECT ?country ?countryLabel ?iso WHERE {
+  ?country wdt:P31/wdt:P279* wd:Q3624078 .
+  ?country wdt:P297 ?iso .
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "ru,en". }
+}
+LIMIT 400
+"""
 
 _airports_index: dict[str, dict] | None = None
 _cities_index: dict[str, dict] | None = None
 _airports_list: list[dict] = []
 _airports_by_code: dict[str, dict] = {}
 _cities_by_code: dict[str, dict] = {}
+_country_iso_by_name: dict[str, str] | None = None
+_country_name_by_iso: dict[str, str] = {}
 
 # Крупные международные хабы: в предложениях «откуда вылететь» они идут первыми,
 # затем — остальные аэропорты по удалённости (мелкие/сезонные в конце).
@@ -121,6 +133,48 @@ COUNTRY_MAIN_AIRPORTS_RAW = {
 }
 # Ключи уже нормализованы (без пробелов/дефисов) — см. _norm().
 COUNTRY_MAIN_AIRPORTS = COUNTRY_MAIN_AIRPORTS_RAW
+MAIN_COUNTRY_AIRPORT_CODES = {
+    code for pairs in COUNTRY_MAIN_AIRPORTS_RAW.values() for code, _city in pairs
+}
+
+# Резервный список ISO2 -> русское название (если Wikidata недоступен).
+# Основной источник — _load_countries() (Wikidata, ~198 стран).
+COUNTRIES_FALLBACK = {
+    "RU": "Россия", "BY": "Беларусь", "KZ": "Казахстан", "UA": "Украина",
+    "UZ": "Узбекистан", "KG": "Киргизия", "TJ": "Таджикистан", "TM": "Туркменистан",
+    "AM": "Армения", "GE": "Грузия", "AZ": "Азербайджан", "MD": "Молдавия",
+    "TR": "Турция", "EG": "Египет", "AE": "ОАЭ", "SA": "Саудовская Аравия",
+    "QA": "Катар", "IL": "Израиль", "JO": "Иордания", "IR": "Иран",
+    "TH": "Таиланд", "VN": "Вьетнам", "CN": "Китай", "JP": "Япония",
+    "KR": "Южная Корея", "IN": "Индия", "ID": "Индонезия", "MY": "Малайзия",
+    "SG": "Сингапур", "PH": "Филиппины", "LK": "Шри-Ланка", "NP": "Непал",
+    "MV": "Мальдивы", "BD": "Бангладеш", "PK": "Пакистан", "MM": "Мьянма",
+    "KH": "Камбоджа", "LA": "Лаос", "MN": "Монголия",
+    "DE": "Германия", "FR": "Франция", "IT": "Италия", "ES": "Испания",
+    "PT": "Португалия", "GB": "Великобритания", "IE": "Ирландия", "NL": "Нидерланды",
+    "BE": "Бельгия", "CH": "Швейцария", "AT": "Австрия", "CZ": "Чехия",
+    "SK": "Словакия", "PL": "Польша", "HU": "Венгрия", "RO": "Румыния",
+    "BG": "Болгария", "GR": "Греция", "HR": "Хорватия", "SI": "Словения",
+    "RS": "Сербия", "BA": "Босния и Герцеговина", "ME": "Черногория",
+    "MK": "Северная Македония", "AL": "Албания", "CY": "Кипр", "MT": "Мальта",
+    "FI": "Финляндия", "SE": "Швеция", "NO": "Норвегия", "DK": "Дания",
+    "EE": "Эстония", "LV": "Латвия", "LT": "Литва", "IS": "Исландия",
+    "MA": "Марокко", "TN": "Тунис", "DZ": "Алжир", "LY": "Ливия",
+    "ET": "Эфиопия", "KE": "Кения", "TZ": "Танзания",
+    "ZA": "ЮАР", "NG": "Нигерия", "GH": "Гана", "SN": "Сенегал",
+    "CI": "Кот-д'Ивуар", "CM": "Камерун", "UG": "Уганда", "RW": "Руанда",
+    "MU": "Маврикий", "SC": "Сейшелы", "MG": "Мадагаскар", "NA": "Намибия",
+    "BW": "Ботсвана", "ZW": "Зимбабве", "ZM": "Замбия", "MZ": "Мозамбик",
+    "AO": "Ангола", "BF": "Буркина-Фасо", "ML": "Мали", "NE": "Нигер",
+    "TD": "Чад", "SD": "Судан", "SO": "Сомали", "ER": "Эритрея",
+    "US": "США", "CA": "Канада", "MX": "Мексика", "CU": "Куба",
+    "DO": "Доминикана", "JM": "Ямайка", "HT": "Гаити", "PA": "Панама",
+    "CR": "Коста-Рика", "GT": "Гватемала", "BZ": "Белиз", "SV": "Сальвадор",
+    "HN": "Гондурас", "NI": "Никарагуа", "CO": "Колумбия", "VE": "Венесуэла",
+    "EC": "Эквадор", "PE": "Перу", "BO": "Боливия", "CL": "Чили",
+    "AR": "Аргентина", "BR": "Бразилия", "UY": "Уругвай", "PY": "Парагвай",
+    "AU": "Австралия", "NZ": "Новая Зеландия", "FJ": "Фиджи", "PG": "Папуа — Новая Гвинея",
+}
 
 
 def _cache_path(name: str) -> Path:
@@ -195,6 +249,129 @@ async def _load_indexes() -> None:
         logger.warning("cities dataset недоступен: %s", exc)
     _airports_index, _cities_index = airports, cities
     _airports_list, _airports_by_code, _cities_by_code = airport_list, by_code, cities_by_code
+
+
+async def _load_countries() -> None:
+    """ISO2 -> русское название страны (из Wikidata), плюс обратный индекс.
+
+    Позволяет резолвить запросы вида «Бангладеш»/«Таиланд» в код страны и
+    затем — во все её аэропорты. Кэшируется на диск; при сбое используем
+    встроенный резервный набор (COUNTRIES_FALLBACK).
+    """
+    global _country_iso_by_name, _country_name_by_iso
+    if _country_iso_by_name is not None:
+        return
+    name_by_iso: dict[str, str] = {}
+    iso_by_name: dict[str, str] = {}
+    data = None
+    cache = _cache_path("countries.json")
+    if cache.exists():
+        try:
+            data = json.loads(cache.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+            data = None
+    if data is None:
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(
+                timeout=40, headers={"User-Agent": "kuda-poedem-bot/1.0 (travel planner)"}
+            ) as client:
+                resp = await client.get(
+                    COUNTRIES_SPARQL_URL,
+                    params={"query": _countries_query, "format": "json"},
+                )
+                resp.raise_for_status()
+                rows = resp.json().get("results", {}).get("bindings", [])
+            data = {
+                (r.get("iso") or {}).get("value", "").upper(): (r.get("countryLabel") or {}).get("value", "")
+                for r in rows
+                if (r.get("iso") or {}).get("value")
+            }
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("countries (Wikidata) недоступны: %s", exc)
+            data = {}
+    for iso, name in (data or {}).items():
+        if iso and name:
+            name_by_iso[iso] = name
+            iso_by_name.setdefault(_norm(name), iso)
+    for name, iso in COUNTRIES_FALLBACK.items():
+        iso_by_name.setdefault(_norm(name), iso)
+        name_by_iso.setdefault(iso, name)
+    _country_name_by_iso, _country_iso_by_name = name_by_iso, iso_by_name
+
+
+async def resolve_country(query: str) -> str | None:
+    """Возвращает ISO2 страны по названию (рус/англ) или самому коду."""
+    await _load_indexes()
+    await _load_countries()
+    tokens = [_norm(t) for t in re.split(r"[,;]", query) if _norm(t)]
+    for token in tokens:
+        if len(token) == 2 and token.upper() in (_country_name_by_iso or {}):
+            return token.upper()
+        iso = (_country_iso_by_name or {}).get(token)
+        if iso:
+            return iso
+    return None
+
+
+async def country_for(query: str) -> str | None:
+    """ISO2 страны для города/аэропорта/страны: сначала по названию страны,
+    затем по стране аэропорта/города из датасета."""
+    iso = await resolve_country(query)
+    if iso:
+        return iso
+    await _load_indexes()
+    record = await _record_for(query)
+    if record is not None:
+        code = record.get("country_code")
+        if code:
+            return code
+        cc = record.get("city_code") or record.get("code")
+        ref = _cities_by_code.get(cc) or _airports_by_code.get(cc)
+        return (ref or {}).get("country_code")
+    return None
+
+
+async def country_airports(query: str, limit: int = 20) -> list[dict]:
+    """Все работающие аэропорты страны (по названию или ISO2).
+
+    Сортировка: главный аэропорт страны -> крупные хабы -> прочие.
+    """
+    iso = await resolve_country(query)
+    if not iso:
+        return []
+    await _load_indexes()
+    scored: list[tuple[int, int, int, str, dict]] = []
+    for ap in _airports_list:
+        if ap.get("country_code") != iso:
+            continue
+        if ap.get("flightable") is False:
+            continue
+        code = ap.get("code", "")
+        if not code or is_closed(code):
+            continue
+        rank0 = 0 if code in MAIN_COUNTRY_AIRPORT_CODES else 1
+        rank1 = 0 if ap.get("main_airport") else 1
+        rank2 = 0 if code in HUB_AIRPORTS else 1
+        scored.append((rank0, rank1, rank2, code, ap))
+    scored.sort(key=lambda t: (t[0], t[1], t[2], t[3]))
+    out: list[dict] = []
+    for _r0, _r1, _r2, code, ap in scored[:limit]:
+        city = (_cities_by_code.get(ap.get("city_code")) or {}).get("name", "")
+        coords = _coords(ap)
+        out.append(
+            {
+                "code": code,
+                "name": ap.get("name", ""),
+                "city": city,
+                "lat": coords[0] if coords else None,
+                "lon": coords[1] if coords else None,
+            }
+        )
+    return out
 
 
 def _coords(item: dict | None) -> tuple[float, float] | None:
@@ -278,7 +455,10 @@ async def departure_alternatives(origin: str, limit: int = 4) -> list[dict]:
 
 
 async def destination_airports(destination: str) -> list[dict]:
-    """Аэропорты пункта назначения: по городу/аэропорту или по стране."""
+    """Аэропорты пункта назначения: по городу/аэропорту или по стране.
+
+    Каждая запись: {"code", "name", "city", "lat", "lon"}.
+    """
     await _load_indexes()
     out: list[dict] = []
     record = await _record_for(destination)
@@ -287,22 +467,54 @@ async def destination_airports(destination: str) -> list[dict]:
         if code in _airports_by_code:
             ap = _airports_by_code[code]
             city = (_cities_by_code.get(ap.get("city_code")) or {}).get("name", "")
-            out.append({"code": code, "name": ap.get("name", ""), "city": city})
+            coords = _coords(ap) or _coords(_cities_by_code.get(ap.get("city_code")))
+            out.append(
+                {
+                    "code": code,
+                    "name": ap.get("name", ""),
+                    "city": city,
+                    "lat": coords[0] if coords else None,
+                    "lon": coords[1] if coords else None,
+                }
+            )
         for ap in _airports_list:
             if ap.get("city_code") == code and ap.get("code") != code:
                 city = (_cities_by_code.get(code) or {}).get("name", "")
-                out.append({"code": ap["code"], "name": ap.get("name", ""), "city": city})
+                coords = _coords(ap) or _coords(_cities_by_code.get(code))
+                out.append(
+                    {
+                        "code": ap["code"],
+                        "name": ap.get("name", ""),
+                        "city": city,
+                        "lat": coords[0] if coords else None,
+                        "lon": coords[1] if coords else None,
+                    }
+                )
         if out:
             return out
-    pairs = COUNTRY_MAIN_AIRPORTS.get(_norm(destination), [])
-    for iata, city in pairs:
+    # Страна (все работающие аэропорты через Wikidata ISO2).
+    country = await country_airports(destination)
+    if country:
+        return country
+    # Резервный курируемый список главных аэропортов страны.
+    for iata, city in COUNTRY_MAIN_AIRPORTS.get(_norm(destination), []):
         ap = _airports_by_code.get(iata)
-        out.append({"code": iata, "name": (ap or {}).get("name", ""), "city": city})
+        coords = _coords(ap)
+        out.append(
+            {
+                "code": iata,
+                "name": (ap or {}).get("name", ""),
+                "city": city,
+                "lat": coords[0] if coords else None,
+                "lon": coords[1] if coords else None,
+            }
+        )
     return out
 
 
 async def travel_context(params: dict) -> dict:
-    """Справочные данные для LLM: статус аэропорта вылета, альтернативы, прилёт."""
+    """Справочные данные для LLM: статус аэропорта вылета, альтернативы, прилёт,
+    реальные достопримечательности пункта назначения."""
     await _load_indexes()
     origin_record = await _record_for(params["origin"])
     origin_code = (origin_record or {}).get("code")
@@ -319,12 +531,31 @@ async def travel_context(params: dict) -> dict:
         }
     alternatives = await departure_alternatives(params["origin"])
     dest_airports = await destination_airports(params["destination"])
+
+    attractions: list[str] = []
+    spots = [d for d in dest_airports if d.get("lat") and d.get("lon")][:3]
+    if spots:
+        from app.services import attractions as attractions_service
+
+        seen: set[str] = set()
+        for sp in spots:
+            if len(attractions) >= 40:
+                break
+            find = await attractions_service.nearby_attractions(sp["lat"], sp["lon"])
+            for item in find:
+                title = item["title"]
+                if title.lower() in seen:
+                    continue
+                seen.add(title.lower())
+                attractions.append(title)
+
     return {
         "origin_label": params["origin"],
         "dest_label": params["destination"],
         "origin_airport": origin_airport,
         "alternatives": alternatives,
         "dest_airports": dest_airports,
+        "attractions": attractions,
     }
 
 
