@@ -6,7 +6,9 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8")
 
 from app.render import render_plan
-from app.services import affiliate, llm, planner, prices
+from app.services import affiliate, llm, planner, prices, schedule
+
+schedule.DISABLED = True  # тесты без сети
 
 PASS = 0
 FAIL = 0
@@ -137,8 +139,8 @@ def test_validation() -> None:
         "visa": "безвиз",
         "practical": ["валюта"],
         "legs": [{"mode": "flight", "from": "Краснодар", "to": "Стамбул", "date": "2026-11-10", "from_iata": "KRR", "to_iata": "IST"}],
-        "days": [{"date": "2026-11-10", "title": "T", "items": []},
-                 {"date": "2026-11-11", "title": "T", "items": []}],
+        "days": [{"date": "2026-11-10", "title": "T", "overnight": "К", "items": []},
+                 {"date": "2026-11-11", "title": "T", "overnight": "К", "items": []}],
         "checklist": ["a", "b", "c"],
         "budget_note": "b",
         "advice": "a",
@@ -152,8 +154,28 @@ def test_validation() -> None:
     no_legs = {**good}
     del no_legs["legs"]
     check("нет legs — ошибка", "legs" in (llm._validate_itinerary(no_legs, params) or ""))
+    no_ov = {**good, "days": [{"date": "2026-11-10", "title": "T", "items": []}]}
+    check("нет overnight в дне — ошибка", "overnight" in (llm._validate_itinerary(no_ov, params) or ""))
     short = {**good, "days": good["days"][:1]}
     check("меньше дней — ошибка", "должно быть" in (llm._validate_itinerary(short, params) or ""))
+
+
+def test_schedule_parsing() -> None:
+    print("[7] парсинг расписания (офлайн)")
+    sample = {
+        "number": "SU 656",
+        "company": "Аэрофлот",
+        "departureLocalDt": "2026-11-11T17:00:00+03:00",
+        "arrivalLocalDt": "2026-11-11T19:20:00+03:00",
+        "duration": 8400,
+    }
+    item = schedule._normalize(sample)
+    check("normalize: время локальное", item["dep"] == "17:00" and item["arr"] == "19:20")
+    check("normalize: длительность в минутах", item["duration_min"] == 140)
+    check("normalize: авиакомпания", item["company"] == "Аэрофлот")
+    check("normalize: без времени -> None", schedule._normalize({"number": "X"}) is None)
+    check("company из dict", schedule._company({"company": {"title": "Победа"}}) == "Победа")
+    check("hhmm fallback на UTC", schedule._hhmm(None, "2026-11-11T10:30:00+00:00") == "10:30")
 
 
 async def test_plan() -> None:
@@ -179,12 +201,18 @@ async def test_plan() -> None:
     check("demo: есть переезды с ссылками", len(plan["legs"]) >= 1 and all(l.get("url") for l in plan["legs"]))
 
     plan["real_prices"] = [{"price": 14500, "airline": "S7", "depart_date": "2026-11-10"}]
+    if plan["legs"]:
+        plan["legs"][0]["options"] = [
+            {"number": "SU 656", "company": "Аэрофлот", "dep": "17:00", "arr": "19:20", "duration_min": 140}
+        ]
     chunks = render_plan(plan)
     text = "\n".join(chunks)
     check("рендер: блок цен", "Реальные цены" in text)
     check("рендер: блок вылета", "Вылет" in text)
     check("рендер: блок маршрута", "Как долететь" in text)
     check("рендер: блок транспорта по маршруту", "Полный маршрут" in text and "выбрать рейс и места" in text)
+    check("рендер: реальное время рейса", "🕑" in text and "SU 656 Аэрофлот 17:00→19:20" in text)
+    check("рендер: ночёвка в дне", "ночёвка:" in text)
     check("рендер: практика", "На месте" in text)
     check("рендер: чек-лист", "Чек-лист" in text)
     check("рендер: ссылки", "Авиабилеты" in text)
@@ -200,6 +228,7 @@ async def main() -> None:
     await test_affiliate()
     await test_airport_context()
     test_validation()
+    test_schedule_parsing()
     await test_plan()
     print(f"\nИТОГО: {PASS} passed, {FAIL} failed, {SKIP} skipped")
     raise SystemExit(1 if FAIL else 0)

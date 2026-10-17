@@ -119,9 +119,11 @@ def trains_link(
     to_city = _city_name(destination)
     if not from_city or not to_city:
         return None
-    if origin_country and dest_country:
-        if origin_country not in RAIL_COUNTRIES or dest_country not in RAIL_COUNTRIES:
-            return None
+    # ЖД-ссылку показываем только если обе страны определены и железнодорожные.
+    if not origin_country or not dest_country:
+        return None
+    if origin_country not in RAIL_COUNTRIES or dest_country not in RAIL_COUNTRIES:
+        return None
     try:
         when = datetime.strptime(date_start, "%Y-%m-%d").strftime("%d.%m.%Y")
     except (TypeError, ValueError):

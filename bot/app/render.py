@@ -8,6 +8,8 @@ MAX_LEN = 3800
 def _fmt_day(day: dict, index: int) -> str:
     lines = [f"<b>День {index}: {escape(str(day.get('date', '')))}, "
              f"{escape(str(day.get('title', '')))}</b>"]
+    if day.get("overnight"):
+        lines.append(f"  🛏 <i>ночёвка: {escape(str(day['overnight']))}</i>")
     for item in day.get("items", []):
         time = escape(str(item.get("time", "")))
         activity = escape(str(item.get("activity", "")))
@@ -23,6 +25,28 @@ def _fmt_day(day: dict, index: int) -> str:
             line += f"\n     💡 {escape(str(tips))}"
         lines.append(line)
     return "\n".join(lines)
+
+
+def _fmt_options(options: list[dict], mode: str = "") -> str:
+    """Реальные рейсы/поезда: 'DP 769 Победа 13:30→15:55 (2ч25м); ...'."""
+    ground = mode in ("train", "rail", "bus", "ferry", "поезд", "автобус", "паром")
+    parts = []
+    for o in options:
+        dep, arr = o.get("dep") or "", o.get("arr") or ""
+        if not dep and not arr:
+            continue
+        label = str(o.get("number") or "").strip()
+        company = str(o.get("company") or "").strip()
+        route = str(o.get("route") or "").strip()
+        detail = (route or company) if ground else (company or route)
+        if detail:
+            label = f"{label} {detail}".strip()
+        text = f"{label} {dep}→{arr}".strip() if dep and arr else f"{label} {dep or arr}".strip()
+        dur = o.get("duration_min")
+        if dur:
+            text += f" ({dur // 60}ч{dur % 60:02d}м)"
+        parts.append(text)
+    return "; ".join(parts)
 
 
 def render_plan(plan: dict) -> list[str]:
@@ -82,6 +106,9 @@ def render_plan(plan: dict) -> list[str]:
             if leg.get("url"):
                 head += f' — <a href="{escape(str(leg["url"]), quote=True)}">выбрать рейс и места</a>'
             parts.append(head)
+            options = leg.get("options") or []
+            if options:
+                parts.append("     🕑 " + escape(_fmt_options(options[:3], leg.get("mode", ""))))
             if leg.get("note"):
                 parts.append(f"     💡 {escape(str(leg['note']))}")
 

@@ -1,13 +1,45 @@
 """Оркестратор: собирает итоговый план из LLM-маршрута и партнёрских ссылок."""
 
+import asyncio
 import logging
 import re
 from datetime import datetime
 
-from app.services import affiliate
+from app.services import affiliate, schedule
 from app.services.llm import demo_itinerary, generate_itinerary
 
 logger = logging.getLogger(__name__)
+
+# Сопоставление режима переезда с типом поиска в Яндекс.Расписаниях.
+_SCHEDULE_KIND = {
+    "flight": "plane",
+    "train": "train",
+    "rail": "train",
+    "поезд": "train",
+    "bus": "bus",
+    "автобус": "bus",
+    "ferry": "ferry",
+    "паром": "ferry",
+}
+_MAX_SCHEDULE_LEGS = 8
+
+
+async def _enrich_legs_with_schedule(legs: list[dict], travelers: int) -> None:
+    """Добавляет к переездам реальные рейсы (номер, время вылета/прилёта)."""
+    kind_for = _SCHEDULE_KIND
+
+    async def one(leg: dict) -> None:
+        kind = kind_for.get(leg.get("mode", ""))
+        if not kind or not leg.get("date"):
+            return
+        options = await schedule.search_schedule(
+            kind, leg.get("from", ""), leg.get("to", ""), leg["date"], limit=5
+        )
+        if options:
+            leg["options"] = options
+            leg["best"] = options[0]
+
+    await asyncio.gather(*(one(leg) for leg in legs[:_MAX_SCHEDULE_LEGS]))
 
 DATE_RE = re.compile(r"(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})")
 DATE_SPLIT_RE = re.compile(r"\s*(?:-|–|—|по|до|с|\.\.\.|\u2026)\s*", re.IGNORECASE)
@@ -69,10 +101,12 @@ async def build_plan(state_data: dict, demo: bool = False) -> dict:
     ctx = await prices.travel_context(params)
     itinerary = demo_itinerary(params, ctx) if demo else await generate_itinerary(params, ctx)
 
-    dep_iata = (((itinerary.get("departure") or {}).get("chosen")) or {}).get("iata")
+    dep_iata = itinerary.get("dep_iata") or (((itinerary.get("departure") or {}).get("chosen")) or {}).get("iata")
     if not dep_iata and ctx.get("alternatives"):
         dep_iata = ctx["alternatives"][0].get("code")
-    dest_iata = next((d.get("code") for d in (ctx.get("dest_airports") or []) if d.get("code")), None)
+    dest_iata = itinerary.get("dest_iata") or next(
+        (d.get("code") for d in (ctx.get("dest_airports") or []) if d.get("code")), None
+    )
 
     # Если пункт назначения — страна, для отелей/экскурсий берём её главный город.
     dest_city = None
@@ -91,6 +125,8 @@ async def build_plan(state_data: dict, demo: bool = False) -> dict:
         dest_iata=dest_iata,
         destination_city=dest_city,
     )
+    legs = affiliate.legs_with_links(itinerary, params["travelers"])
+    await _enrich_legs_with_schedule(legs, params["travelers"])
     real_prices: list[dict] = []
     if not demo:
         real_prices = await prices.get_best_flights(
@@ -103,6 +139,6 @@ async def build_plan(state_data: dict, demo: bool = False) -> dict:
         "params": params,
         "itinerary": itinerary,
         "links": links,
-        "legs": affiliate.legs_with_links(itinerary, params["travelers"]),
+        "legs": legs,
         "real_prices": real_prices,
     }
